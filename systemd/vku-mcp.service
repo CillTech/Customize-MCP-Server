@@ -1,0 +1,17 @@
+[Unit]
+Description=VKU Native C++ Model Context Protocol (MCP) Server for Agentic AI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vku-mcp
+ExecStart=/usr/local/bin/vku_mcp_server
+Restart=always
+RestartSec=3
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

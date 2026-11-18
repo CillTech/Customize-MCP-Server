@@ -1,0 +1,28 @@
+# ==============================================================================
+# Git Ignore Configuration for VKU Linux MCP Project
+# ==============================================================================
+
+# Compiled binaries and build outputs
+bin/
+*.exe
+*.out
+*.app
+*.o
+*.obj
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Editor & IDE configs (keep sftp.json private if contains credentials)
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+
+# Logs and runtime artifacts
+*.log
+*.tmp

@@ -532,7 +532,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
             <!-- Quick Action Prompts -->
             <div class="quick-prompts">
-                <button class="btn-prompt" onclick="sendPrompt('Kiểm tra nhiệt độ CPU')">🌡️ Nhiệt độ CPU</button>
+                <button class="btn-prompt" onclick="sendPrompt('Kiểm tra CPU')">📈 Hiệu suất CPU</button>
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra sức khỏe hệ thống')">📊 Sức khỏe hệ thống</button>
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra xem NGINX có đang chạy không')">⚙️ Trạng thái NGINX</button>
                 <button class="btn-prompt" onclick="sendPrompt('Khởi động lại dịch vụ NGINX')">🔄 Restart NGINX</button>

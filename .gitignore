@@ -17,6 +17,7 @@ __pycache__/
 .pytest_cache/
 
 # Editor & IDE configs (keep sftp.json private if contains credentials)
+.vscode/sftp.json
 .DS_Store
 *.swp
 *.swo

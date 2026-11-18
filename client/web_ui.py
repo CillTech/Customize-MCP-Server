@@ -14,6 +14,7 @@ import json
 import time
 import subprocess
 import threading
+import re
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 
@@ -475,7 +476,7 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="card">
             <div class="card-title">
                 <span>Memory (RAM)</span>
-                <span>POSIX sysinfo</span>
+                <span>/proc/meminfo</span>
             </div>
             <div class="card-value" id="ram-val">-- MB</div>
             <div class="progress-bar-bg">
@@ -534,6 +535,7 @@ HTML_PAGE = """<!DOCTYPE html>
             <div class="quick-prompts">
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra CPU')">📈 Hiệu suất CPU</button>
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra sức khỏe hệ thống')">📊 Sức khỏe hệ thống</button>
+                <button class="btn-prompt" onclick="sendPrompt('RAM còn bao nhiêu')">🧠 Phân tích RAM</button>
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra xem NGINX có đang chạy không')">⚙️ Trạng thái NGINX</button>
                 <button class="btn-prompt" onclick="sendPrompt('Khởi động lại dịch vụ NGINX')">🔄 Restart NGINX</button>
                 <button class="btn-prompt" onclick="sendPrompt('Rà soát các cổng mạng đang mở')">🛡️ Quét cổng mạng</button>
@@ -713,11 +715,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             prompt = req_data.get("prompt", "")
 
             response_text = agent_instance.process_query(prompt)
+            # Strip terminal ANSI escape codes for clean web display
+            clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', response_text)
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
-            self.wfile.write(json.dumps({"response": response_text}).encode("utf-8"))
+            self.wfile.write(json.dumps({"response": clean_text}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()

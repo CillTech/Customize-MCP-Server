@@ -39,26 +39,14 @@ public:
             };
         }
 
-        // 2. Memory & Process Information (sysinfo POSIX call)
+        // 2. Memory & Process Information
         struct sysinfo s_info;
+        long uptime_sec = 0;
+        int proc_count = 0;
         if (sysinfo(&s_info) == 0) {
-            unsigned long long total_ram = (unsigned long long)s_info.totalram * s_info.mem_unit;
-            unsigned long long free_ram = (unsigned long long)s_info.freeram * s_info.mem_unit;
-            unsigned long long buffer_ram = (unsigned long long)s_info.bufferram * s_info.mem_unit;
-            unsigned long long used_ram = total_ram - free_ram - buffer_ram;
+            uptime_sec = s_info.uptime;
+            proc_count = s_info.procs;
 
-            double ram_used_pct = total_ram > 0 ? (double)used_ram / total_ram * 100.0 : 0.0;
-
-            result["memory"] = {
-                {"total_mb", total_ram / (1024 * 1024)},
-                {"used_mb", used_ram / (1024 * 1024)},
-                {"free_mb", free_ram / (1024 * 1024)},
-                {"buffer_mb", buffer_ram / (1024 * 1024)},
-                {"used_percentage", std::round(ram_used_pct * 10.0) / 10.0}
-            };
-
-            // Uptime formatting
-            long uptime_sec = s_info.uptime;
             long days = uptime_sec / 86400;
             long hours = (uptime_sec % 86400) / 3600;
             long minutes = (uptime_sec % 3600) / 60;
@@ -72,7 +60,59 @@ public:
                 {"formatted", uptime_str.str()}
             };
 
-            result["process_count"] = s_info.procs;
+            result["process_count"] = proc_count;
+        }
+
+        // Exact memory calculation matching Linux standard 'free -m' via /proc/meminfo
+        unsigned long long mem_total_kb = 0, mem_free_kb = 0, mem_avail_kb = 0;
+        unsigned long long mem_buffers_kb = 0, mem_cached_kb = 0, mem_reclaim_kb = 0;
+
+        std::ifstream meminfo_file("/proc/meminfo");
+        if (meminfo_file.is_open()) {
+            std::string key;
+            unsigned long long val;
+            while (meminfo_file >> key >> val) {
+                if (key == "MemTotal:") mem_total_kb = val;
+                else if (key == "MemFree:") mem_free_kb = val;
+                else if (key == "MemAvailable:") mem_avail_kb = val;
+                else if (key == "Buffers:") mem_buffers_kb = val;
+                else if (key == "Cached:") mem_cached_kb = val;
+                else if (key == "SReclaimable:") mem_reclaim_kb = val;
+                std::string rest;
+                std::getline(meminfo_file, rest);
+            }
+        }
+
+        if (mem_total_kb > 0) {
+            unsigned long long buff_cache_kb = mem_buffers_kb + mem_cached_kb + mem_reclaim_kb;
+            unsigned long long mem_used_kb = (mem_total_kb >= (mem_free_kb + buff_cache_kb)) ? (mem_total_kb - mem_free_kb - buff_cache_kb) : 0;
+            if (mem_avail_kb == 0) mem_avail_kb = mem_free_kb + buff_cache_kb;
+
+            double ram_used_pct = (double)mem_used_kb / mem_total_kb * 100.0;
+
+            result["memory"] = {
+                {"total_mb", mem_total_kb / 1024},
+                {"used_mb", mem_used_kb / 1024},
+                {"free_mb", mem_free_kb / 1024},
+                {"available_mb", mem_avail_kb / 1024},
+                {"buff_cache_mb", buff_cache_kb / 1024},
+                {"used_percentage", std::round(ram_used_pct * 10.0) / 10.0}
+            };
+        } else if (sysinfo(&s_info) == 0) {
+            // Fallback to sysinfo
+            unsigned long long total_ram = (unsigned long long)s_info.totalram * s_info.mem_unit;
+            unsigned long long free_ram = (unsigned long long)s_info.freeram * s_info.mem_unit;
+            unsigned long long used_ram = total_ram - free_ram;
+            double ram_used_pct = total_ram > 0 ? (double)used_ram / total_ram * 100.0 : 0.0;
+
+            result["memory"] = {
+                {"total_mb", total_ram / (1024 * 1024)},
+                {"used_mb", used_ram / (1024 * 1024)},
+                {"free_mb", free_ram / (1024 * 1024)},
+                {"available_mb", free_ram / (1024 * 1024)},
+                {"buff_cache_mb", 0},
+                {"used_percentage", std::round(ram_used_pct * 10.0) / 10.0}
+            };
         }
 
         // 3. Disk Storage Information (statvfs POSIX call)
@@ -143,7 +183,7 @@ public:
         result = {
             {"status", "DEV_SIMULATION"},
             {"os_info", {{"sysname", "Linux-Simulated"}, {"machine", "x86_64"}}},
-            {"memory", {{"total_mb", 8192}, {"used_mb", 3540}, {"free_mb", 4652}, {"used_percentage", 43.2}}},
+            {"memory", {{"total_mb", 16936}, {"used_mb", 1333}, {"free_mb", 12371}, {"available_mb", 15329}, {"buff_cache_mb", 3231}, {"used_percentage", 7.9}}},
             {"uptime", {{"seconds", 12345}, {"formatted", "0d 3h 25m 45s"}}},
             {"disk_root", {{"total_gb", 50.0}, {"used_gb", 14.5}, {"available_gb", 35.5}, {"used_percentage", 29.0}}},
             {"cpu_load", {{"load_1min", 0.45}, {"load_5min", 0.38}, {"load_15min", 0.30}}}

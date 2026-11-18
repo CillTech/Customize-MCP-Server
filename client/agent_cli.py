@@ -172,24 +172,24 @@ class AgenticController:
         # 0. Help / Capabilities / Menu
         if has_any(["chức năng", "làm được gì", "tác dụng", "hỏi gì", "giúp", "help", "menu", "hướng dẫn"]):
             return (
-                f"🤖 {BOLD}CÁC TÁC DỤNG & CÂU HỎI BẠN CÓ THỂ HỎI TRỢ LÝ AI VKU:{RESET}\n"
-                f"  1. 📈 {CYAN}Hiệu suất & Tải CPU:{RESET}\n"
+                f"🤖 CÁC TÁC DỤNG & CÂU HỎI BẠN CÓ THỂ HỎI TRỢ LÝ AI VKU:\n"
+                f"  1. 📈 Hiệu suất & Tải CPU:\n"
                 f"     • 'Kiểm tra CPU', 'Mức tải CPU hiện tại', 'CPU load average'\n"
-                f"  2. 🧠 {CYAN}Bộ nhớ RAM:{RESET}\n"
+                f"  2. 🧠 Bộ nhớ RAM:\n"
                 f"     • 'RAM còn bao nhiêu', 'Kiểm tra bộ nhớ RAM', 'Tình trạng RAM'\n"
-                f"  3. 💾 {CYAN}Dung lượng Ổ cứng:{RESET}\n"
+                f"  3. 💾 Dung lượng Ổ cứng:\n"
                 f"     • 'Ổ cứng còn trống bao nhiêu', 'Kiểm tra dung lượng disk', 'Ổ đĩa đầy chưa'\n"
-                f"  4. ⏱️ {CYAN}Thời gian hoạt động (Uptime):{RESET}\n"
+                f"  4. ⏱️ Thời gian hoạt động (Uptime):\n"
                 f"     • 'Máy đã chạy bao lâu', 'Uptime của server', 'Thời gian bật máy'\n"
-                f"  5. ⚙️ {CYAN}Quản lý dịch vụ Daemon (Systemd):{RESET}\n"
+                f"  5. ⚙️ Quản lý dịch vụ Daemon (Systemd):\n"
                 f"     • 'Kiểm tra trạng thái NGINX', 'Khởi động lại NGINX', 'Bật SSH', 'Tắt NGINX'\n"
-                f"  6. 🛡️ {CYAN}Rà soát cổng mạng & An toàn (Network Security):{RESET}\n"
+                f"  6. 🛡️ Rà soát cổng mạng & An toàn (Network Security):\n"
                 f"     • 'Rà soát các cổng mạng đang mở', 'Kiểm tra port listening', 'Quét cổng'\n"
-                f"  7. 📜 {CYAN}Đọc nhật ký hệ thống (System Logs):{RESET}\n"
+                f"  7. 📜 Đọc nhật ký hệ thống (System Logs):\n"
                 f"     • 'Xem 10 dòng log mới nhất', 'Đọc syslog', 'Xem log lỗi nginx', 'Log auth'\n"
-                f"  8. ⛔ {CYAN}Thử nghiệm Sandbox Bảo mật (C++ Security Filter):{RESET}\n"
+                f"  8. ⛔ Thử nghiệm Sandbox Bảo mật (C++ Security Filter):\n"
                 f"     • 'chạy lệnh rm -rf /tmp/data' (bị chặn ngay), 'chạy lệnh uname -a' (an toàn)\n"
-                f"  9. 📊 {CYAN}Sức khỏe hệ thống tổng quát:{RESET}\n"
+                f"  9. 📊 Sức khỏe hệ thống tổng quát:\n"
                 f"     • 'Kiểm tra sức khỏe hệ thống', 'Tài nguyên máy chủ', 'Tình trạng server'\n"
             )
 
@@ -204,10 +204,10 @@ class AgenticController:
             l5 = cpu.get("load_5min", 0)
             l15 = cpu.get("load_15min", 0)
             
-            eval_str = f"{GREEN}Mức tải CPU rất thấp, hệ thống phản hồi cực kỳ mượt mà.{RESET}" if l1 < 2.0 else f"{YELLOW}Mức tải CPU tương đối cao.{RESET}"
+            eval_str = "Mức tải CPU rất thấp, hệ thống phản hồi cực kỳ mượt mà." if l1 < 2.0 else "Mức tải CPU tương đối cao."
             return (
-                f"📈 {BOLD}Báo Cáo Hiệu Suất CPU (Đọc trực tiếp từ /proc/loadavg):{RESET}\n"
-                f"  • Tải trung bình 1 phút  : {BOLD}{l1}{RESET}\n"
+                f"📈 Báo Cáo Hiệu Suất CPU (Đọc trực tiếp từ /proc/loadavg):\n"
+                f"  • Tải trung bình 1 phút  : {l1}\n"
                 f"  • Tải trung bình 5 phút  : {l5}\n"
                 f"  • Tải trung bình 15 phút : {l15}\n"
                 f"  ➔ Đánh giá               : {eval_str}"
@@ -222,14 +222,18 @@ class AgenticController:
             mem = data.get("memory", {})
             total = mem.get("total_mb", 0)
             used = mem.get("used_mb", 0)
-            free = mem.get("free_mb", total - used)
+            free = mem.get("free_mb", 0)
+            avail = mem.get("available_mb", free)
+            buff_cache = mem.get("buff_cache_mb", 0)
             pct = mem.get("used_percentage", 0)
             
-            eval_str = f"{GREEN}RAM rất dồi dào, hệ thống vận hành mượt mà.{RESET}" if pct < 80 else f"{RED}RAM đang ở mức cao! Cần lưu ý.{RESET}"
+            eval_str = "RAM rất dồi dào, hệ thống vận hành cực kỳ mượt mà." if pct < 80 else "RAM đang ở mức cao! Cần lưu ý."
             return (
-                f"🧠 {BOLD}Báo Cáo Bộ Nhớ RAM (Đọc trực tiếp qua POSIX sysinfo):{RESET}\n"
-                f"  • Đang sử dụng : {BOLD}{used} MB / {total} MB{RESET} ({pct}%)\n"
-                f"  • Còn trống    : {CYAN}{free} MB{RESET} ({round(100 - pct, 1)}%)\n"
+                f"🧠 Báo Cáo Bộ Nhớ RAM (Chuẩn khớp lệnh 'free -m' của Linux):\n"
+                f"  • Đang sử dụng : {used} MB / {total} MB ({pct}%)\n"
+                f"  • Còn trống    : {free} MB\n"
+                f"  • Khả dụng     : {avail} MB (Sẵn sàng cho ứng dụng)\n"
+                f"  • Buff/Cache   : {buff_cache} MB (Bộ đệm cache hệ thống)\n"
                 f"  ➔ Đánh giá     : {eval_str}"
             )
 
@@ -245,12 +249,12 @@ class AgenticController:
             avail = disk.get("available_gb", 0)
             pct = disk.get("used_percentage", 0)
             
-            eval_str = f"{GREEN}Dung lượng ổ cứng còn trống nhiều, an toàn cho lưu trữ.{RESET}" if pct < 85 else f"{RED}Ổ cứng sắp đầy! Cần dọn dẹp.{RESET}"
+            eval_str = "Dung lượng ổ cứng còn trống nhiều, an toàn cho lưu trữ." if pct < 85 else "Ổ cứng sắp đầy! Cần dọn dẹp."
             return (
-                f"💾 {BOLD}Báo Cáo Dung Lượng Ổ Cứng (Đọc trực tiếp qua POSIX statvfs):{RESET}\n"
+                f"💾 Báo Cáo Dung Lượng Ổ Cứng (Đọc trực tiếp qua POSIX statvfs):\n"
                 f"  • Phân vùng    : Root (/)\n"
-                f"  • Đã sử dụng   : {BOLD}{used} GB / {total} GB{RESET} ({pct}%)\n"
-                f"  • Còn khả dụng : {CYAN}{avail} GB{RESET} ({round(100 - pct, 1)}%)\n"
+                f"  • Đã sử dụng   : {used} GB / {total} GB ({pct}%)\n"
+                f"  • Còn khả dụng : {avail} GB ({round(100 - pct, 1)}%)\n"
                 f"  ➔ Đánh giá     : {eval_str}"
             )
 
@@ -265,13 +269,12 @@ class AgenticController:
             os_name = data.get("os_info", {}).get("sysname", "Linux")
             
             return (
-                f"⏱️ {BOLD}Thời Gian Hoạt Động Hệ Thống (System Uptime):{RESET}\n"
-                f"  • Thời gian chạy liên tục : {CYAN}{uptime}{RESET}\n"
-                f"  • Số tiến trình hiện hành : {BOLD}{procs}{RESET} processes\n"
-                f"  • Hệ điều hành            : {GREEN}{os_name}{RESET}\n"
-                f"  ➔ Đánh giá               : {GREEN}Hệ thống hoạt động ổn định và liên tục, không bị reboot bất thường.{RESET}"
+                f"⏱️ Thời Gian Hoạt Động Hệ Thống (System Uptime):\n"
+                f"  • Thời gian chạy liên tục : {uptime}\n"
+                f"  • Số tiến trình hiện hành : {procs} processes\n"
+                f"  • Hệ điều hành            : {os_name}\n"
+                f"  ➔ Đánh giá               : Hệ thống hoạt động ổn định và liên tục, không bị reboot bất thường."
             )
-
 
         # 6. Service Management (nginx, ssh, etc.)
         if has_any(["service", "dịch vụ", "nginx", "ssh", "systemctl", "bật", "tắt", "khởi động", "restart", "start", "stop"]):
@@ -296,10 +299,10 @@ class AgenticController:
 
             state = data.get("active_state", "unknown")
             return (
-                f"⚙️ {BOLD}Kết Quả Thao Tác Dịch Vụ Systemd:{RESET}\n"
-                f"  • Dịch vụ   : {CYAN}{service_name}{RESET}\n"
+                f"⚙️ Kết Quả Thao Tác Dịch Vụ Systemd:\n"
+                f"  • Dịch vụ   : {service_name}\n"
                 f"  • Thao tác  : {action.upper()}\n"
-                f"  • Trạng thái: {GREEN if state == 'active' else RED}{state.upper()}{RESET}\n"
+                f"  • Trạng thái: {state.upper()}\n"
                 f"  • Exit Code : {data.get('exit_code')}\n"
                 f"  • Phản hồi  : {data.get('output').strip()}"
             )
@@ -311,7 +314,7 @@ class AgenticController:
             raw_output = self.bridge.call_tool("audit_network_ports")
             data = json.loads(raw_output)
             return (
-                f"🛡️ {BOLD}Kết Quả Rà Soát Cổng Mạng (Security Audit):{RESET}\n"
+                f"🛡️ Kết Quả Rà Soát Cổng Mạng (Security Audit):\n"
                 f"{data.get('raw_sockets').strip()}\n\n"
                 f"  ➔ Khuyến nghị: {data.get('recommendation')}"
             )
@@ -331,7 +334,7 @@ class AgenticController:
             raw_output = self.bridge.call_tool("inspect_logs", {"log_source": log_type, "lines": 10})
             data = json.loads(raw_output)
             return (
-                f"📜 {BOLD}Nhật Ký Hệ Thống ({log_type}):{RESET}\n"
+                f"📜 Nhật Ký Hệ Thống ({log_type}):\n"
                 f"{data.get('log_content').strip()}"
             )
 
@@ -351,7 +354,7 @@ class AgenticController:
 
             if data.get("allowed") is False:
                 return (
-                    f"⛔ {RED}{BOLD}[CẢNH BÁO SANDBOX BẢO MẬT VI PHẠM]{RESET}\n"
+                    f"⛔ [CẢNH BÁO SANDBOX BẢO MẬT VI PHẠM]\n"
                     f"  • Lệnh bị chặn : {cmd}\n"
                     f"  • Mã vi phạm   : {data.get('violation')}\n"
                     f"  • Lý do        : {data.get('reason')}\n"
@@ -359,7 +362,7 @@ class AgenticController:
                 )
             else:
                 return (
-                    f"💻 {BOLD}Thực Thi Lệnh Thành Công:{RESET}\n"
+                    f"💻 Thực Thi Lệnh Thành Công:\n"
                     f"{data.get('output').strip()}"
                 )
 
@@ -377,12 +380,12 @@ class AgenticController:
             os_name = data.get("os_info", {}).get("sysname", "Linux")
 
             return (
-                f"📊 {BOLD}Báo Cáo Tình Trạng Hệ Thống (Đọc trực tiếp qua POSIX C++):{RESET}\n"
-                f"  • Hệ điều hành : {GREEN}{os_name} (Uptime: {uptime}){RESET}\n"
-                f"  • Bộ nhớ RAM   : Đang dùng {BOLD}{mem.get('used_mb')}MB / {mem.get('total_mb')}MB{RESET} ({mem.get('used_percentage')}%)\n"
-                f"  • Ổ cứng (/)   : Đang dùng {BOLD}{disk.get('used_gb')}GB / {disk.get('total_gb')}GB{RESET} ({disk.get('used_percentage')}%)\n"
+                f"📊 Báo Cáo Tình Trạng Hệ Thống (Đọc trực tiếp qua POSIX C++):\n"
+                f"  • Hệ điều hành : {os_name} (Uptime: {uptime})\n"
+                f"  • Bộ nhớ RAM   : Đang dùng {mem.get('used_mb')}MB / {mem.get('total_mb')}MB ({mem.get('used_percentage')}%)\n"
+                f"  • Ổ cứng (/)   : Đang dùng {disk.get('used_gb')}GB / {disk.get('total_gb')}GB ({disk.get('used_percentage')}%)\n"
                 f"  • CPU Load Avg : {cpu.get('load_1min')} (1m) | {cpu.get('load_5min')} (5m) | {cpu.get('load_15min')} (15m)\n"
-                f"  ➔ Đánh giá: {GREEN}Hệ thống đang hoạt động ổn định và an toàn.{RESET}"
+                f"  ➔ Đánh giá: Hệ thống đang hoạt động ổn định và an toàn."
             )
 
         # Fallback General Response
@@ -407,7 +410,9 @@ class AgenticController:
             except Exception as e:
                 print(f"  {YELLOW}[Notice] Cloud API unavailable ({e}). Falling back to Autonomous Reasoner.{RESET}")
         
-        return self.autonomous_reason(user_query)
+        res = self.autonomous_reason(user_query)
+        # Clean any stray terminal escape sequences
+        return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res)
 
 
 def interactive_session():

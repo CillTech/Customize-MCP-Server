@@ -806,7 +806,7 @@ def run_server():
     print("======================================================================")
     print(f" [VKU OSS 2026] Web UI & Live Telemetry Dashboard is ONLINE!")
     print(f" -> Local Access   : http://localhost:{PORT}")
-    print(f" -> Network Access : http://0.0.0.0:{PORT}")
+    print(f" -> Network Access : http://192.168.122.28:{PORT}")
     print("======================================================================")
     try:
         server.serve_forever()

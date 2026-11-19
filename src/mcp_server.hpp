@@ -120,7 +120,6 @@ public:
                 {"serverInfo", {
                     {"name", SERVER_NAME},
                     {"version", SERVER_VERSION},
-                    {"author", "Tran Duy Duc Anh (24IT009) & VKU Team"},
                     {"description", "High-Performance Native C++ MCP Server for Linux Administration"}
                 }}
             };

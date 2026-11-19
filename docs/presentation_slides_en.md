@@ -1,7 +1,7 @@
 # PRESENTATION SLIDES OUTLINE
 ## Topic 15: High-Performance Native C++ MCP Server for Agentic AI in Linux
 **Course:** Linux & Open Source Software 2026 - VKU  
-**Team:** 24IT009 - Trần Duy Đức Anh & Team Members
+**Team:** Topic 15 Research Team (VKU Linux OSS 2026)
 
 ---
 
@@ -9,7 +9,7 @@
 - **Title:** High-Performance Native C++ MCP Server for Agentic AI in Linux
 - **Subtitle:** Model Context Protocol & System Administration Automation
 - **Institution:** Vietnam - Korea University of Information and Communication Technology (VKU)
-- **Presenter:** Trần Duy Đức Anh (24IT009) & Team
+- **Presenter:** Topic 15 Research Team
 
 ### Slide 2: The Rise of Agentic AI in System Administration
 - What is Agentic AI? An AI with the ability to reason, plan, and autonomously take action.

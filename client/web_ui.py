@@ -3,7 +3,7 @@
 ==============================================================================
  VKU Agentic AI - Modern Web UI & Live Telemetry Dashboard
  Powered by: Native C++ Model Context Protocol (MCP) Server
- Author: Tran Duy Duc Anh (24IT009) & VKU Team
+ Author: VKU OSS Team
  Course: Linux & Open Source Software 2026 - VKU
 ==============================================================================
 """
@@ -24,6 +24,7 @@ from agent_cli import MCPServerBridge, AgenticController, BIN_PATH
 
 HOST = "0.0.0.0"
 PORT = 8080
+SERVER_BOOT_TIME = int(time.time() * 1000)
 
 # Global bridge & agent instances
 mcp_bridge = None
@@ -268,6 +269,28 @@ HTML_PAGE = """<!DOCTYPE html>
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+
+        .btn-clear-chat {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 0.78rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn-clear-chat:hover {
+            background: rgba(239, 68, 68, 0.3);
+            border-color: #ef4444;
+            color: #ffffff;
+            transform: scale(1.02);
         }
 
         .chat-messages {
@@ -521,7 +544,9 @@ HTML_PAGE = """<!DOCTYPE html>
         <section class="chat-panel">
             <div class="chat-header">
                 <span>🤖 AI Agent Terminal Interface</span>
-                <span style="font-size: 0.8rem; color: var(--text-muted);">Tran Duy Duc Anh (24IT009)</span>
+                <button class="btn-clear-chat" onclick="clearChat()" title="Xóa lịch sử hội thoại để giải phóng bộ nhớ context">
+                    🔄 Làm mới Chat
+                </button>
             </div>
 
             <div class="chat-messages" id="chat-box">
@@ -663,6 +688,22 @@ HTML_PAGE = """<!DOCTYPE html>
             }
         }
 
+        async function clearChat() {
+            try {
+                await fetch('/api/clear_chat', { method: 'POST' });
+                const chatBox = document.getElementById('chat-box');
+                chatBox.innerHTML = `
+                    <div class="msg msg-ai">
+                        🔄 <em>Đã làm mới đoạn chat và giải phóng bộ nhớ context!</em><br><br>
+                        Xin chào! Tôi là Trợ lý AI Quản trị Linux VKU được kết nối trực tiếp với <strong>C++ MCP Server</strong> trên nhân Linux.<br><br>
+                        Tôi có thể tự động kiểm tra tài nguyên hệ thống, bật/tắt dịch vụ NGINX, đọc nhật ký lỗi, rà soát cổng mạng, hoặc thực thi lệnh an toàn qua Sandbox. Hãy nhập câu hỏi bên dưới hoặc chọn các thao tác nhanh!
+                    </div>
+                `;
+            } catch (err) {
+                console.error("Lỗi khi xóa chat:", err);
+            }
+        }
+
         function sendPrompt(text) {
             document.getElementById('user-input').value = text;
             doSend();
@@ -673,6 +714,23 @@ HTML_PAGE = """<!DOCTYPE html>
         updateTraffic();
         setInterval(updateTelemetry, 3000);
         setInterval(updateTraffic, 1500);
+
+        // Auto Live-Reload: automatically refresh browser when code builds & server reloads
+        let currentBootTime = null;
+        setInterval(async () => {
+            try {
+                const res = await fetch('/api/version');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (currentBootTime === null) {
+                        currentBootTime = data.boot_time;
+                    } else if (currentBootTime !== data.boot_time) {
+                        console.log("Server reloaded! Refreshing web page...");
+                        window.location.reload();
+                    }
+                }
+            } catch (e) {}
+        }, 1000);
     </script>
 </body>
 </html>
@@ -702,6 +760,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(mcp_traffic_logs).encode("utf-8"))
+        elif parsed.path == "/api/version":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"boot_time": SERVER_BOOT_TIME}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -722,6 +785,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
             self.wfile.write(json.dumps({"response": clean_text}).encode("utf-8"))
+        elif parsed.path == "/api/clear_chat":
+            if agent_instance:
+                agent_instance.clear_history()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()

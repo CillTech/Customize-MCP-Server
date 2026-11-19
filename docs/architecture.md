@@ -80,7 +80,6 @@
     "serverInfo": {
       "name": "vku-linux-mcp-server",
       "version": "1.0.0",
-      "author": "Tran Duy Duc Anh (24IT009) & VKU Team",
       "description": "High-Performance Native C++ MCP Server for Linux Administration"
     }
   }

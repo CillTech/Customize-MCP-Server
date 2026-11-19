@@ -10,7 +10,7 @@
 - **Institution:** Vietnam - Korea University of Information and Communication Technology (VKU)
 - **Class:** 24IT
 - **Student(s):**
-  - Trần Duy Đức Anh (Student ID: 24IT009)
+  - [Member 1 Name & Student ID]
   - [Member 2 Name & Student ID]
   - [Member 3 Name & Student ID]
 - **Instructor / Supervisor:** [Lecturer Name]

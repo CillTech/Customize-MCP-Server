@@ -8,7 +8,6 @@ using json = nlohmann::json;
 void print_banner() {
     std::cerr << "==========================================================\n"
               << " [VKU OSS 2026] Native C++ MCP Server for Agentic AI\n"
-              << " Author: Tran Duy Duc Anh (Student ID: 24IT009)\n"
               << " Protocol: Model Context Protocol (JSON-RPC 2.0 / stdio)\n"
               << " Target: Ubuntu Linux System Administration\n"
               << "==========================================================\n"

@@ -1,7 +1,7 @@
 # CẤU TRÚC THƯ MỤC & CHI TIẾT TÁC DỤNG TỪNG FILE
 ## Đề tài: Build and Configure an MCP Server for Agentic AI in Linux
 **Môn học:** Linux & Phần mềm mã nguồn mở (Linux OSS 2026 - VKU)  
-**Sinh viên thực hiện:** Trần Duy Đức Anh (Mã SV: 24IT009) & Nhóm
+**Nhóm thực hiện:** Nhóm đề tài 15 (VKU Linux OSS 2026)
 
 ---
 

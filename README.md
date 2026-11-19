@@ -2,7 +2,7 @@
 
 > **Course**: Linux & Open Source Software (Linux OSS 2026)  
 > **Institution**: Vietnam - Korea University of Information and Communication Technology (VKU)  
-> **Student**: Trần Duy Đức Anh (Student ID: 24IT009) & Team  
+> **Team**: Topic 15 Research Team (VKU Linux OSS 2026)  
 > **Topic**: STT 15 - Build and Configure an MCP Server for Agentic AI in Linux
 
 ---

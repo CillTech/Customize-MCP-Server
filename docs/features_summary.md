@@ -1,7 +1,7 @@
 # TỔNG HỢP CÁC CHỨC NĂNG DỰ ÁN (PROJECT FEATURES SUMMARY)
 ## Đề tài: Build and Configure an MCP Server for Agentic AI in Linux
 **Môn học:** Linux & Phần mềm mã nguồn mở (Linux OSS 2026 - VKU)  
-**Sinh viên thực hiện:** Trần Duy Đức Anh (Mã SV: 24IT009) & Nhóm  
+**Nhóm thực hiện:** Nhóm đề tài 15 (VKU Linux OSS 2026)  
 **Công nghệ nền tảng:** C++17 (Native POSIX System Calls), JSON-RPC 2.0 (Model Context Protocol), Python 3 (Agent Controller), HTML5/CSS3 (Glassmorphic Web Dashboard).
 
 ---

@@ -74,7 +74,8 @@ public:
         const std::vector<std::string> allowed_prefixes = {
             "df", "free", "ps", "top", "uptime", "ls", "grep", "cat", "who", "w",
             "ip", "netstat", "ss", "systemctl", "journalctl", "find", "head", "tail",
-            "curl", "ping", "id", "uname", "pwd", "date", "which", "tree", "awk", "sed"
+            "curl", "ping", "id", "uname", "pwd", "date", "which", "tree", "awk", "sed",
+            "mkdir", "touch", "echo", "cp"
         };
 
         // Extract first word

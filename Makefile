@@ -1,6 +1,6 @@
 # ==============================================================================
 # Makefile for VKU Native C++ MCP Server (Linux OSS 2026)
-# Author: Tran Duy Duc Anh (24IT009) & VKU Team
+# Author: VKU OSS Team
 # ==============================================================================
 
 CXX = g++

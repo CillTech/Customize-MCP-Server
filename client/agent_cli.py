@@ -490,6 +490,7 @@ class AgenticController:
             "đóng ", "dong ", "chặn ", "chan ", "bật ", "bat ",
             "tắt ", "tat ", "quét ", "quet ", "rà soát", "ra soat",
             "liệt kê", "liet ke", "thu thập", "thu thap",
+            "dừng ", "dung ", "giết ", "giet ", "tìm ", "tim ", "ping ",
         ))
         is_discussion = has_any([
             "ảnh hưởng gì", "ảnh hưởng như thế nào", "ảnh hưởng thế nào", "ảnh hưởng đến", "ảnh hưởng tới",
@@ -570,6 +571,90 @@ class AgenticController:
                     return "firewall_rule", "manage_firewall_rule", {"action": "disable", "target": "ufw"}
 
             return "firewall_status", "check_firewall_status", {}
+
+        # 3.5 Tiến trình, Ổ đĩa, Tệp tin hệ thống, Mạng & DevOps (12 Tools mở rộng)
+        if has_any(["dừng tiến trình", "giết tiến trình", "tắt tiến trình", "kill pid", "kill tiến trình"]):
+            m_pid = re.search(r"\b(\d+)\b", plain)
+            pid = int(m_pid.group(1)) if m_pid else 1
+            sig = "SIGKILL" if has_any(["sigkill", "kill -9", "-9"]) else "SIGTERM"
+            return "kill_proc", "kill_process", {"pid": pid, "signal": sig}
+
+        if has_any(["top tiến trình", "tiến trình ăn cpu", "tiến trình tốn cpu", "tiến trình tốn ram", "tiến trình ăn ram", "danh sách tiến trình", "liệt kê tiến trình", "các tiến trình"]) or re.search(r"\btop\s+\d+\s+tiến trình", user_input.lower()):
+            sort_by = "mem" if has_any(["ram", "bộ nhớ", "mem"]) else "cpu"
+            m_lim = re.search(r"\b(\d{1,2})\b", plain)
+            limit = min(max(int(m_lim.group(1)), 1), 30) if m_lim else 10
+            return "top_proc", "list_top_processes", {"sort_by": sort_by, "limit": limit}
+
+        if has_any(["phân vùng", "mountpoint", "partition", "các ổ đĩa"]):
+            return "partitions", "get_disk_partitions", {}
+
+        if has_any(["quyền file", "quyền thư mục", "chmod", "chown", "check_file_permissions", "quyền truy cập file"]):
+            m_path = re.search(r"(/[^\s]+|[a-zA-Z0-9_./-]+)$", user_input.strip())
+            fpath = m_path.group(1) if m_path else "/etc/passwd"
+            return "file_perm", "check_file_permissions", {"path": fpath}
+
+        if has_any(["tìm từ khóa", "tìm lỗi trong log", "tìm trong log", "search log", "search_in_logs"]) or (
+            has_any(["tìm", "search"]) and has_any(["log", "syslog", "nhật ký"])
+        ):
+            lsrc = "syslog"
+            if "nginx" in plain:
+                lsrc = "nginx"
+            elif "auth" in plain or "ssh" in plain:
+                lsrc = "auth"
+            elif "journal" in plain:
+                lsrc = "journal"
+            m_kw = re.search(
+                r"(?:từ khóa|tu khoa)\s+[\"']?([^\s\"']+)[\"']?",
+                user_input,
+                re.IGNORECASE,
+            ) or re.search(
+                r"(?:tìm|tim)(?:\s+lỗi|\s+loi)?\s+[\"']?([^\s\"']+)[\"']?",
+                user_input,
+                re.IGNORECASE,
+            )
+            kw = m_kw.group(1) if m_kw and m_kw.group(1).lower() not in ("trong", "log") else "error"
+            return "search_logs", "search_in_logs", {"keyword": kw, "log_source": lsrc, "limit": 30}
+
+        if has_any(["đọc file hệ thống", "doc file he thong", "read_file_safe"]) or (
+            has_any(["đọc file", "doc file", "xem file"])
+            and re.search(r"\s(/(?:etc|var|proc|usr|tmp)/[^\s]+)", user_input)
+        ):
+            m_sys = re.search(r"(/(?:etc|var|proc|usr|tmp)/[^\s]+|[^\s]+)$", user_input.strip())
+            fpath = m_sys.group(1) if m_sys else "/etc/os-release"
+            return "read_sys_file", "read_file_safe", {"path": fpath, "max_lines": 50}
+
+        if has_any(["ping tới", "ping thử", "ping_host"]) or plain.startswith("ping "):
+            m_host = re.search(r"(?:ping(?:\s+thử|\s+thu)?(?:\s+tới|\s+toi|\s+đến|\s+den)?\s+)([a-zA-Z0-9.:-]+)", user_input, re.IGNORECASE)
+            host = m_host.group(1) if m_host else "8.8.8.8"
+            return "ping", "ping_host", {"host": host, "count": 3}
+
+        if has_any(["phân giải tên miền", "kiểm tra dns", "tra cứu dns", "nslookup", "check_dns"]) or " dns " in f" {plain} ":
+            m_dom = re.search(r"\b([a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+)\b", user_input)
+            dom = m_dom.group(1) if m_dom else "google.com"
+            return "dns", "check_dns_resolution", {"domain": dom}
+
+        if has_any(["http endpoint", "kiểm tra http", "kiểm tra web", "check http", "check_http_endpoint"]) or re.search(r"https?://", user_input):
+            m_url = re.search(r"(https?://[^\s]+)", user_input)
+            url = m_url.group(1) if m_url else "http://127.0.0.1:8080"
+            return "http_check", "check_http_endpoint", {"url": url}
+
+        if has_any(["cron job", "tác vụ cron", "crontab", "tác vụ định kỳ", "list_cron_jobs"]):
+            return "cron_jobs", "list_cron_jobs", {}
+
+        if has_any(["user đang đăng nhập", "ai đang đăng nhập", "phiên đăng nhập", "người dùng đang đăng nhập", "get_user_sessions"]):
+            return "user_sessions", "get_user_sessions", {}
+
+        if has_any(["docker container", "các container", "docker ps", "log container", "restart container", "manage_docker"]):
+            d_act = "ps"
+            c_name = ""
+            if has_any(["log", "nhật ký"]):
+                d_act = "logs"
+            elif has_any(["restart", "khởi động lại"]):
+                d_act = "restart"
+            if d_act != "ps":
+                m_c = re.search(r"container\s+([a-zA-Z0-9_.-]+)", user_input, re.IGNORECASE)
+                c_name = m_c.group(1) if m_c else ""
+            return "docker", "manage_docker_containers", {"action": d_act, "container_name": c_name}
 
         # 4. Inspect Logs (đặt TRƯỚC service để 'xem log ssh/nginx' không bị nhầm sang manage_service)
         if has_any(["log", "nhật ký", "journal", "lỗi hệ thống", "dmesg"]):
@@ -908,6 +993,57 @@ class AgenticController:
                 return f"▶️ Chạy {data.get('path')} (exit={data.get('exit_code')}):\n{(data.get('output') or '').strip()}"
             return f"✅ Đã thực hiện {act} trong Customize-MCP-Server/{data.get('path')} (Sandbox Content: {data.get('content_audit', 'OK')})."
 
+        if intent == "kill_proc":
+            if data.get("allowed") is False:
+                return f"⛔ [SANDBOX CHẶN]: {data.get('error', 'Không được phép dừng tiến trình lõi.')}"
+            return f"⚙️ Kết quả kill PID {args.get('pid')}: {data.get('message') or data.get('error', '')}"
+
+        if intent == "top_proc":
+            return f"📈 Top {args.get('limit', 10)} tiến trình theo {args.get('sort_by', 'cpu').upper()}:\n{(data.get('processes') or '').strip()}"
+
+        if intent == "partitions":
+            rows = "\n".join(
+                f"  • {p['mountpoint']} ({p['device']}, {p['fstype']}): {p['used_gb']}/{p['total_gb']} GB ({p['used_percentage']}%)"
+                for p in data.get("partitions", [])
+            )
+            return f"💾 Các phân vùng ổ đĩa đang mount:\n{rows}"
+
+        if intent == "file_perm":
+            if not data.get("success", False):
+                return f"⚠️ Lỗi kiểm tra quyền: {data.get('error', '')}"
+            return (
+                f"🔐 Quyền tệp {data.get('path')}:\n"
+                f"  • Mode : {data.get('mode_symbolic')} ({data.get('mode_octal')})\n"
+                f"  • Owner: {data.get('owner')}:{data.get('group')} | Size: {data.get('size_bytes')} bytes"
+            )
+
+        if intent == "search_logs":
+            return f"🔎 Kết quả tìm '{args.get('keyword')}' trong {data.get('log_source')} ({data.get('match_count', 0)} dòng):\n{(data.get('matches') or '').strip()}"
+
+        if intent == "read_sys_file":
+            if data.get("allowed") is False:
+                return f"⛔ [SANDBOX CHẶN]: {data.get('error', 'Không được phép đọc file nhạy cảm.')}"
+            return f"📄 Nội dung {data.get('path')}:\n{(data.get('content') or data.get('error', '')).strip()}"
+
+        if intent == "ping":
+            return f"📡 Kết quả Ping {args.get('host')}:\n{(data.get('output') or data.get('error', '')).strip()}"
+
+        if intent == "dns":
+            recs = ", ".join(f"{r['type']}: {r['address']}" for r in data.get("records", []))
+            return f"🌐 DNS {args.get('domain')}: {recs or data.get('error', 'Không phân giải được')}"
+
+        if intent == "http_check":
+            return f"🌍 Kiểm tra HTTP {args.get('url')}: {(data.get('output') or data.get('error', '')).strip()}"
+
+        if intent == "cron_jobs":
+            return f"⏱️ Cron Jobs:\n• User: {(data.get('user_crontab') or '').strip()}\n• /etc/cron.d: {data.get('system_cron_d', '')}"
+
+        if intent == "user_sessions":
+            return f"👥 Phiên đăng nhập:\n{(data.get('sessions') or '').strip()}"
+
+        if intent == "docker":
+            return f"🐳 Docker ({args.get('action')}):\n{(data.get('output') or data.get('error', '')).strip()}"
+
         if intent == "logs":
             return (
                 f"📜 Nhật Ký Hệ Thống ({args['log_source']} - {args['lines']} dòng):\n"
@@ -988,7 +1124,9 @@ class AgenticController:
         # 3. Đưa kết quả thực tế cho Qwen Local phân tích và trả lời ngay (100% Offline)
         qwen_err_msg = None
         strip_guides = bool(
-            tool_name and tool_name not in ("execute_safe_command", "manage_workspace")
+            tool_name
+            and tool_name
+            not in ("execute_safe_command", "manage_workspace", "read_file_safe", "search_in_logs")
         )
         is_action = tool_name in {
             "manage_firewall_rule",
@@ -996,6 +1134,8 @@ class AgenticController:
             "execute_safe_command",
             "auto_mitigate_ssh_attack",
             "incident_memory",
+            "kill_process",
+            "manage_docker_containers",
         } or (
             tool_name == "manage_workspace"
             and args.get("action") in ("create_dir", "create_file", "edit_file", "append_file", "delete", "run_file")

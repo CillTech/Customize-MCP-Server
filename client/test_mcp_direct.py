@@ -52,9 +52,9 @@ def test_mcp_server():
             "validate": lambda res: res.get("result", {}).get("protocolVersion") == "2024-11-05"
         },
         {
-            "name": "MCP Tool Discovery (tools/list -> 15 tools)",
+            "name": "MCP Tool Discovery (tools/list -> 27 tools)",
             "request": {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-            "validate": lambda res: len(res.get("result", {}).get("tools", [])) == 15
+            "validate": lambda res: len(res.get("result", {}).get("tools", [])) == 27
         },
         {
             "name": "Tool 1: get_system_health",
@@ -180,6 +180,71 @@ def test_mcp_server():
             "name": "Tool 15: manage_workspace (delete cleanup)",
             "request": {"jsonrpc": "2.0", "id": 27, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "delete", "path": "_mcp_test_tmp.py"}}},
             "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 16: list_top_processes (cpu, limit 5)",
+            "request": {"jsonrpc": "2.0", "id": 28, "method": "tools/call", "params": {"name": "list_top_processes", "arguments": {"sort_by": "cpu", "limit": 5}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 17: kill_process (Sandbox block core PID 1)",
+            "request": {"jsonrpc": "2.0", "id": 29, "method": "tools/call", "params": {"name": "kill_process", "arguments": {"pid": 1, "signal": "SIGTERM"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Tool 18: get_disk_partitions",
+            "request": {"jsonrpc": "2.0", "id": 30, "method": "tools/call", "params": {"name": "get_disk_partitions", "arguments": {}}},
+            "validate": lambda res: "partitions" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 19: read_file_safe (allow /etc/os-release)",
+            "request": {"jsonrpc": "2.0", "id": 31, "method": "tools/call", "params": {"name": "read_file_safe", "arguments": {"path": "/etc/os-release", "max_lines": 10}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 19: read_file_safe (Sandbox block /etc/shadow)",
+            "request": {"jsonrpc": "2.0", "id": 32, "method": "tools/call", "params": {"name": "read_file_safe", "arguments": {"path": "/etc/shadow", "max_lines": 10}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Tool 20: search_in_logs",
+            "request": {"jsonrpc": "2.0", "id": 33, "method": "tools/call", "params": {"name": "search_in_logs", "arguments": {"keyword": "linux", "log_source": "syslog", "limit": 5}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 21: check_file_permissions (/etc/passwd)",
+            "request": {"jsonrpc": "2.0", "id": 34, "method": "tools/call", "params": {"name": "check_file_permissions", "arguments": {"path": "/etc/passwd"}}},
+            "validate": lambda res: "mode_octal" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 22: ping_host (Sandbox block injection)",
+            "request": {"jsonrpc": "2.0", "id": 35, "method": "tools/call", "params": {"name": "ping_host", "arguments": {"host": "8.8.8.8; id", "count": 1}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Tool 23: check_dns_resolution (localhost)",
+            "request": {"jsonrpc": "2.0", "id": 36, "method": "tools/call", "params": {"name": "check_dns_resolution", "arguments": {"domain": "localhost"}}},
+            "validate": lambda res: "records" in json.loads(res["result"]["content"][0]["text"]) or "error" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 24: check_http_endpoint (Sandbox block invalid scheme)",
+            "request": {"jsonrpc": "2.0", "id": 37, "method": "tools/call", "params": {"name": "check_http_endpoint", "arguments": {"url": "file:///etc/passwd"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Tool 25: list_cron_jobs",
+            "request": {"jsonrpc": "2.0", "id": 38, "method": "tools/call", "params": {"name": "list_cron_jobs", "arguments": {}}},
+            "validate": lambda res: "user_crontab" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 26: get_user_sessions",
+            "request": {"jsonrpc": "2.0", "id": 39, "method": "tools/call", "params": {"name": "get_user_sessions", "arguments": {}}},
+            "validate": lambda res: "sessions" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 27: manage_docker_containers (ps)",
+            "request": {"jsonrpc": "2.0", "id": 40, "method": "tools/call", "params": {"name": "manage_docker_containers", "arguments": {"action": "ps", "container_name": ""}}},
+            "validate": lambda res: "action" in json.loads(res["result"]["content"][0]["text"])
         }
     ]
 

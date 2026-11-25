@@ -31,6 +31,8 @@ SERVER_BOOT_TIME = int(time.time() * 1000)
 mcp_bridge = None
 agent_instance = None
 mcp_traffic_logs = []
+traffic_seq = 0
+traffic_lock = threading.Lock()
 MAX_TRAFFIC_LOGS = 50
 watchdog_enabled = False
 watchdog_alerts = []
@@ -68,14 +70,14 @@ def self_healing_watchdog():
         if not watchdog_enabled or mcp_bridge is None:
             continue
         try:
-            health_raw = mcp_bridge.call_tool("get_system_health")
+            health_raw = mcp_bridge.call_tool_silent("get_system_health")
             health = json.loads(health_raw)
             ram_pct = health.get("memory", {}).get("used_percentage", 0)
             if ram_pct >= 90:
                 add_watchdog_alert("WARNING", f"Cảnh báo RAM cao ({ram_pct}%)! AI đang ghi nhận snapshot sự cố.")
                 mcp_bridge.call_tool("collect_incident_snapshot", {"log_lines": 10})
 
-            svc_raw = mcp_bridge.call_tool("manage_service", {"service_name": "nginx", "action": "is-active"})
+            svc_raw = mcp_bridge.call_tool_silent("manage_service", {"service_name": "nginx", "action": "is-active"})
             svc = json.loads(svc_raw)
             if svc.get("active_state") in ("inactive", "failed"):
                 mcp_bridge.call_tool("inspect_logs", {"log_source": "nginx", "lines": 10})
@@ -90,42 +92,61 @@ def self_healing_watchdog():
             pass
 
 def log_traffic(direction, data):
-    global mcp_traffic_logs
+    global mcp_traffic_logs, traffic_seq
     timestamp = time.strftime("%H:%M:%S")
-    entry = {
-        "timestamp": timestamp,
-        "direction": direction,
-        "data": data
-    }
-    mcp_traffic_logs.append(entry)
-    if len(mcp_traffic_logs) > MAX_TRAFFIC_LOGS:
-        mcp_traffic_logs.pop(0)
+    with traffic_lock:
+        traffic_seq += 1
+        entry = {
+            "seq": traffic_seq,
+            "timestamp": timestamp,
+            "direction": direction,
+            "data": data
+        }
+        mcp_traffic_logs.append(entry)
+        if len(mcp_traffic_logs) > MAX_TRAFFIC_LOGS:
+            mcp_traffic_logs.pop(0)
 
 # Kế thừa MCPServerBridge để ghi lại toàn bộ gói tin JSON-RPC gửi/nhận hiển thị lên Live Inspector
 class LoggedBridge(MCPServerBridge):
-    def _send_rpc(self, method, params=None):
-        self.request_id += 1
-        payload = {
-            "jsonrpc": "2.0",
-            "id": self.request_id,
-            "method": method
-        }
-        if params is not None:
-            payload["params"] = params
+    def __init__(self, binary_path):
+        self._rpc_lock = threading.Lock()
+        super().__init__(binary_path)
 
-        req_str = json.dumps(payload)
-        log_traffic("OUT (Client -> C++ MCP)", payload) # Lưu log chiều gửi đi để hiển thị lên bảng Live Inspector
+    def _send_rpc(self, method, params=None, record_log=True):
+        with self._rpc_lock:
+            self.request_id += 1
+            payload = {
+                "jsonrpc": "2.0",
+                "id": self.request_id,
+                "method": method
+            }
+            if params is not None:
+                payload["params"] = params
 
-        self.proc.stdin.write(req_str + "\n")
-        self.proc.stdin.flush()
+            req_str = json.dumps(payload)
+            if record_log:
+                log_traffic("OUT (Client -> C++ MCP)", payload)
 
-        resp_line = self.proc.stdout.readline()
-        if not resp_line:
-            raise RuntimeError("MCP Server terminated unexpectedly.")
-        
-        resp_json = json.loads(resp_line)
-        log_traffic("IN (C++ MCP -> Client)", resp_json) # Lưu log chiều phản hồi từ C++ Server
-        return resp_json
+            self.proc.stdin.write(req_str + "\n")
+            self.proc.stdin.flush()
+
+            resp_line = self.proc.stdout.readline()
+            if not resp_line:
+                raise RuntimeError("MCP Server terminated unexpectedly.")
+
+            resp_json = json.loads(resp_line)
+            if record_log:
+                log_traffic("IN (C++ MCP -> Client)", resp_json)
+            return resp_json
+
+    def call_tool_silent(self, name, arguments=None):
+        """Gọi MCP tool cho polling nền (không làm nhiễu Live Inspector)."""
+        params = {"name": name, "arguments": arguments or {}}
+        resp = self._send_rpc("tools/call", params, record_log=False)
+        content = resp.get("result", {}).get("content", [])
+        if content and isinstance(content[0], dict) and "text" in content[0]:
+            return content[0]["text"]
+        return json.dumps(resp.get("result", {}), ensure_ascii=False)
 
 # Khởi tạo kết nối C++ MCP Server và AI Agent cho Web UI
 def init_backend():
@@ -644,7 +665,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
             <span class="brand-badge">VKU OSS 2026</span>
             <div>
                 <h1>Agentic AI Linux MCP Controller</h1>
-                <span class="brand-sub">Native C++17 POSIX Core • 15 Active Tools</span>
+                <span class="brand-sub">Native C++17 POSIX Core • 27 Active Tools</span>
             </div>
         </div>
         <div class="header-actions">
@@ -692,7 +713,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <aside class="sidebar-panel">
             <div class="sidebar-header">
                 <span>🧰 Danh mục MCP Tools</span>
-                <span class="tool-count-badge">15 Live</span>
+                <span class="tool-count-badge">27 Live</span>
             </div>
             <div class="sidebar-content">
                 <!-- Nhóm 1: Hệ thống & Dịch vụ -->
@@ -742,8 +763,74 @@ HTML_PAGE = r"""<!DOCTYPE html>
                     </div>
                 </div>
 
-                <!-- Nhóm 3: Agentic AI & Tự hành -->
-                <div class="acc-group open">
+                <!-- Nhóm 3: Tiến trình & Ổ đĩa -->
+                <div class="acc-group">
+                    <button class="acc-header" onclick="toggleGroup(this)">
+                        <span>⚙️ Tiến trình & Ổ đĩa (3)</span>
+                        <span class="acc-arrow">▶</span>
+                    </button>
+                    <div class="acc-body">
+                        <button class="tool-item" onclick="sendPrompt('Xem top 5 tiến trình đang ăn CPU nhiều nhất')">
+                            <span class="tool-name">list_top_processes</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Dừng tiến trình PID 1')">
+                            <span class="tool-name">kill_process</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra các phân vùng ổ đĩa')">
+                            <span class="tool-name">get_disk_partitions</span><span class="tag-live">LIVE</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Nhóm 4: Tệp tin & Log hệ thống -->
+                <div class="acc-group">
+                    <button class="acc-header" onclick="toggleGroup(this)">
+                        <span>📁 Tệp tin & Log An toàn (3)</span>
+                        <span class="acc-arrow">▶</span>
+                    </button>
+                    <div class="acc-body">
+                        <button class="tool-item" onclick="sendPrompt('Đọc file hệ thống /etc/os-release')">
+                            <span class="tool-name">read_file_safe</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Tìm từ khóa error trong log syslog')">
+                            <span class="tool-name">search_in_logs</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra quyền file /etc/passwd')">
+                            <span class="tool-name">check_file_permissions</span><span class="tag-live">LIVE</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Nhóm 5: Mạng & DevOps -->
+                <div class="acc-group">
+                    <button class="acc-header" onclick="toggleGroup(this)">
+                        <span>🌐 Mạng & DevOps (6)</span>
+                        <span class="acc-arrow">▶</span>
+                    </button>
+                    <div class="acc-body">
+                        <button class="tool-item" onclick="sendPrompt('Ping thử tới 8.8.8.8')">
+                            <span class="tool-name">ping_host</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra phân giải tên miền google.com')">
+                            <span class="tool-name">check_dns_resolution</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra HTTP endpoint http://127.0.0.1:8080')">
+                            <span class="tool-name">check_http_endpoint</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Liệt kê các tác vụ cron job')">
+                            <span class="tool-name">list_cron_jobs</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Xem danh sách user đang đăng nhập')">
+                            <span class="tool-name">get_user_sessions</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Xem các Docker container đang chạy')">
+                            <span class="tool-name">manage_docker_containers</span><span class="tag-live">LIVE</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Nhóm 6: Agentic AI & Tự hành -->
+                <div class="acc-group">
                     <button class="acc-header" onclick="toggleGroup(this)">
                         <span>🤖 Agentic AI & Tự hành (6)</span>
                         <span class="acc-arrow">▶</span>
@@ -767,20 +854,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
                         <button class="tool-item" onclick="sendPrompt('Gợi ý model Qwen phù hợp với RAM hiện tại')">
                             <span class="tool-name">ai_model_router</span><span class="tag-live">LIVE</span>
                         </button>
-                    </div>
-                </div>
-
-                <!-- Nhóm 4: Mở rộng theo lộ trình -->
-                <div class="acc-group">
-                    <button class="acc-header" onclick="toggleGroup(this)">
-                        <span>🚀 Lộ trình mở rộng (12)</span>
-                        <span class="acc-arrow">▶</span>
-                    </button>
-                    <div class="acc-body">
-                        <div class="tool-item planned"><span class="tool-name">list_top_processes</span><span class="tag-plan">Plan</span></div>
-                        <div class="tool-item planned"><span class="tool-name">read_file_safe</span><span class="tag-plan">Plan</span></div>
-                        <div class="tool-item planned"><span class="tool-name">ping_host</span><span class="tag-plan">Plan</span></div>
-                        <div class="tool-item planned"><span class="tool-name">manage_docker_containers</span><span class="tag-plan">Plan</span></div>
                     </div>
                 </div>
             </div>
@@ -840,6 +913,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <script>
         let currentTrafficFilter = 'all';
         let cachedLogs = [];
+        let lastTrafficSeq = -1;
 
         function toggleGroup(btn) {
             btn.parentElement.classList.toggle('open');
@@ -916,32 +990,71 @@ HTML_PAGE = r"""<!DOCTYPE html>
             } catch (err) {}
         }
 
+        function buildLogCard(log) {
+            const rawStr = JSON.stringify(log.data, null, 2);
+            const isBlocked = (
+                rawStr.includes('BLOCKED_BY_SANDBOX') ||
+                rawStr.includes('BLOCKED_BY_CONTENT_SANDBOX') ||
+                rawStr.includes('OUTSIDE_WORKSPACE_SCOPE') ||
+                rawStr.includes('COMMAND_NOT_WHITELISTED') ||
+                rawStr.includes('BLOCKED_BY_READONLY_MODE')
+            );
+
+            if (currentTrafficFilter === 'blocked' && !isBlocked) return null;
+            if (currentTrafficFilter === 'ok' && isBlocked) return null;
+
+            const div = document.createElement('div');
+            const cls = isBlocked ? 'log-blocked' : (log.direction.startsWith('OUT') ? 'log-out' : 'log-in');
+            div.className = `log-entry ${cls}`;
+            div.innerHTML = `
+                <div class="log-time">${log.timestamp} • <span class="log-dir">${log.direction}</span>${isBlocked ? ' <span style="color:var(--danger)">[BLOCKED]</span>' : ''}</div>
+                <div class="log-body">${escapeHtml(rawStr)}</div>
+            `;
+            return div;
+        }
+
         function renderTraffic() {
             const box = document.getElementById('traffic-box');
             box.innerHTML = '';
             cachedLogs.slice().reverse().forEach(log => {
-                const rawStr = JSON.stringify(log.data, null, 2);
-                const isBlocked = rawStr.includes('BLOCKED_BY_SANDBOX') || rawStr.includes('COMMAND_NOT_WHITELISTED') || rawStr.includes('BLOCKED_BY_READONLY_MODE');
-
-                if (currentTrafficFilter === 'blocked' && !isBlocked) return;
-                if (currentTrafficFilter === 'ok' && isBlocked) return;
-
-                const div = document.createElement('div');
-                const cls = isBlocked ? 'log-blocked' : (log.direction.startsWith('OUT') ? 'log-out' : 'log-in');
-                div.className = `log-entry ${cls}`;
-                div.innerHTML = `
-                    <div class="log-time">${log.timestamp} • <span class="log-dir">${log.direction}</span>${isBlocked ? ' <span style="color:var(--danger)">[BLOCKED]</span>' : ''}</div>
-                    <div class="log-body">${escapeHtml(rawStr)}</div>
-                `;
-                box.appendChild(div);
+                const card = buildLogCard(log);
+                if (card) box.appendChild(card);
             });
         }
 
         async function updateTraffic() {
             try {
                 const res = await fetch('/api/traffic');
-                cachedLogs = await res.json();
-                renderTraffic();
+                const payload = await res.json();
+                const latestSeq = Array.isArray(payload) ? payload.length : (payload.seq || 0);
+                const logs = Array.isArray(payload) ? payload : (payload.logs || []);
+
+                // Không có log mới -> giữ nguyên giao diện, tránh nhấp nháy/nhảy dòng
+                if (latestSeq === lastTrafficSeq) return;
+
+                const prevSeq = lastTrafficSeq;
+                cachedLogs = logs;
+                lastTrafficSeq = latestSeq;
+
+                if (prevSeq < 0) {
+                    renderTraffic();
+                    return;
+                }
+
+                // Chỉ chèn thêm các log mới phát sinh lên đầu bảng
+                const box = document.getElementById('traffic-box');
+                const newLogs = logs.filter(l => (l.seq || 0) > prevSeq);
+                if (newLogs.length === 0) return;
+
+                newLogs.forEach(log => {
+                    const card = buildLogCard(log);
+                    if (card) {
+                        box.insertBefore(card, box.firstChild);
+                    }
+                });
+                while (box.children.length > 50) {
+                    box.removeChild(box.lastChild);
+                }
             } catch (err) {}
         }
 
@@ -1071,9 +1184,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(HTML_PAGE.encode("utf-8"))
         elif parsed.path == "/api/telemetry":
-            # API lấy thông số RAM/CPU/Disk thời gian thực từ tool C++ get_system_health
+            # API polling thông số RAM/CPU/Disk cho 4 thẻ Dashboard (không spam Live Inspector)
             try:
-                raw = mcp_bridge.call_tool("get_system_health")
+                raw = mcp_bridge.call_tool_silent("get_system_health")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -1083,10 +1196,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
         elif parsed.path == "/api/traffic":
+            with traffic_lock:
+                payload = {"seq": traffic_seq, "logs": list(mcp_traffic_logs)}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(mcp_traffic_logs).encode("utf-8"))
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
         elif parsed.path == "/api/version":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

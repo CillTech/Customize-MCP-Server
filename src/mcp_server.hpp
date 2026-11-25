@@ -9,8 +9,12 @@
 
 
 #include "ai_tools.hpp"
+#include "devops_tools.hpp"
+#include "file_tools.hpp"
 #include "firewall_tools.hpp"
 #include "log_tools.hpp"
+#include "network_tools.hpp"
+#include "process_tools.hpp"
 #include "security_sandbox.hpp"
 #include "service_tools.hpp"
 #include "system_tools.hpp"
@@ -227,6 +231,105 @@ private:
                {{"type", "array"},
                 {"items", {{"type", "string"}}},
                 {"description", "Optional arguments for run_file"}}}}},
+            {"required", {"action"}}}}},
+         {{"name", "list_top_processes"},
+          {"description", "List top N Linux processes sorted by CPU or memory usage."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"sort_by",
+               {{"type", "string"},
+                {"enum", {"cpu", "mem"}},
+                {"default", "cpu"}}},
+              {"limit",
+               {{"type", "integer"},
+                {"default", 10}}}}},
+            {"required", json::array()}}}},
+         {{"name", "kill_process"},
+          {"description", "Terminate a process by PID (blocks core OS PIDs <= 100)."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"pid", {{"type", "integer"}}},
+              {"signal",
+               {{"type", "string"},
+                {"enum", {"SIGTERM", "SIGKILL"}},
+                {"default", "SIGTERM"}}}}},
+            {"required", {"pid"}}}}},
+         {{"name", "get_disk_partitions"},
+          {"description", "Inspect mounted disk partitions and usage via POSIX getmntent/statvfs."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties", json::object()},
+            {"required", json::array()}}}},
+         {{"name", "read_file_safe"},
+          {"description", "Safely read whitelisted system config or log files (blocks secrets)."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"path", {{"type", "string"}}},
+              {"max_lines", {{"type", "integer"}, {"default", 50}}}}},
+            {"required", {"path"}}}}},
+         {{"name", "search_in_logs"},
+          {"description", "Search a keyword safely inside syslog, auth, nginx, or journal logs."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"keyword", {{"type", "string"}}},
+              {"log_source",
+               {{"type", "string"},
+                {"enum", {"syslog", "auth", "nginx", "journal"}},
+                {"default", "syslog"}}},
+              {"limit", {{"type", "integer"}, {"default", 30}}}}},
+            {"required", {"keyword"}}}}},
+         {{"name", "check_file_permissions"},
+          {"description", "Inspect file permissions, owner, group, and size using POSIX stat()."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties", {{"path", {{"type", "string"}}}}},
+            {"required", {"path"}}}}},
+         {{"name", "ping_host"},
+          {"description", "Ping an IP address or hostname safely (1 to 5 packets)."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"host", {{"type", "string"}}},
+              {"count", {{"type", "integer"}, {"default", 3}}}}},
+            {"required", {"host"}}}}},
+         {{"name", "check_dns_resolution"},
+          {"description", "Resolve a domain name using POSIX getaddrinfo()."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties", {{"domain", {{"type", "string"}}}}},
+            {"required", {"domain"}}}}},
+         {{"name", "check_http_endpoint"},
+          {"description", "Check HTTP/HTTPS endpoint status code and latency."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties", {{"url", {{"type", "string"}}}}},
+            {"required", {"url"}}}}},
+         {{"name", "list_cron_jobs"},
+          {"description", "List current user crontab and /etc/cron.d tasks."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties", json::object()},
+            {"required", json::array()}}}},
+         {{"name", "get_user_sessions"},
+          {"description", "List active logged-in Linux user sessions."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties", json::object()},
+            {"required", json::array()}}}},
+         {{"name", "manage_docker_containers"},
+          {"description", "List, inspect logs, or restart Docker containers safely."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"action",
+               {{"type", "string"},
+                {"enum", {"ps", "logs", "restart"}},
+                {"default", "ps"}}},
+              {"container_name", {{"type", "string"}, {"default", ""}}}}},
             {"required", {"action"}}}}}});
   }
 
@@ -348,6 +451,50 @@ public:
         }
         execution_result = vku::tools::WorkspaceTools::manage_workspace(
             ws_action, ws_path, ws_content, ws_args);
+      } else if (tool_name == "list_top_processes") {
+        std::string sort_by = args.value("sort_by", "cpu");
+        int limit = args.value("limit", 10);
+        execution_result =
+            vku::tools::ProcessTools::list_top_processes(sort_by, limit);
+      } else if (tool_name == "kill_process") {
+        int pid = args.value("pid", 0);
+        std::string sig = args.value("signal", "SIGTERM");
+        execution_result = vku::tools::ProcessTools::kill_process(pid, sig);
+      } else if (tool_name == "get_disk_partitions") {
+        execution_result = vku::tools::ProcessTools::get_disk_partitions();
+      } else if (tool_name == "read_file_safe") {
+        std::string fpath = args.value("path", "");
+        int max_lines = args.value("max_lines", 50);
+        execution_result =
+            vku::tools::FileTools::read_file_safe(fpath, max_lines);
+      } else if (tool_name == "search_in_logs") {
+        std::string kw = args.value("keyword", "");
+        std::string lsrc = args.value("log_source", "syslog");
+        int llim = args.value("limit", 30);
+        execution_result =
+            vku::tools::FileTools::search_in_logs(kw, lsrc, llim);
+      } else if (tool_name == "check_file_permissions") {
+        std::string fpath = args.value("path", "");
+        execution_result = vku::tools::FileTools::check_file_permissions(fpath);
+      } else if (tool_name == "ping_host") {
+        std::string host = args.value("host", "");
+        int cnt = args.value("count", 3);
+        execution_result = vku::tools::NetworkTools::ping_host(host, cnt);
+      } else if (tool_name == "check_dns_resolution") {
+        std::string dom = args.value("domain", "");
+        execution_result = vku::tools::NetworkTools::check_dns_resolution(dom);
+      } else if (tool_name == "check_http_endpoint") {
+        std::string url = args.value("url", "");
+        execution_result = vku::tools::NetworkTools::check_http_endpoint(url);
+      } else if (tool_name == "list_cron_jobs") {
+        execution_result = vku::tools::DevopsTools::list_cron_jobs();
+      } else if (tool_name == "get_user_sessions") {
+        execution_result = vku::tools::DevopsTools::get_user_sessions();
+      } else if (tool_name == "manage_docker_containers") {
+        std::string d_act = args.value("action", "ps");
+        std::string c_name = args.value("container_name", "");
+        execution_result = vku::tools::DevopsTools::manage_docker_containers(
+            d_act, c_name);
       } else {
         return make_error(id, -32601, "Method/Tool not found: " + tool_name);
       }

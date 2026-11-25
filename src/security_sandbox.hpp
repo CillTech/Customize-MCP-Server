@@ -90,6 +90,7 @@ private:
     return args;
   }
 
+public:
   // Ghi nhật ký kiểm toán bảo mật (Audit Log) vào logs/sandbox_audit.log
   static void write_audit_log(const std::string &status,
                               const std::string &command,
@@ -112,7 +113,214 @@ private:
     }
   }
 
-public:
+  // Duyệt nội dung file trước khi tạo/sửa/chạy trong Workspace Sandbox
+  static json audit_file_content(const std::string &content,
+                                 const std::string &target_label = "") {
+    json result;
+    const size_t MAX_FILE_BYTES = 262144; // 256 KB
+
+    if (content.size() > MAX_FILE_BYTES) {
+      std::string reason =
+          "Content exceeds maximum allowed size (256KB) for Sandbox file write.";
+      write_audit_log("BLOCKED_CONTENT_SIZE", target_label, reason);
+      return {{"approved", false},
+              {"violation", "BLOCKED_BY_CONTENT_SANDBOX"},
+              {"reason", reason}};
+    }
+
+    if (content.find('\0') != std::string::npos) {
+      std::string reason =
+          "Binary/NUL byte payload is not permitted in text file creation.";
+      write_audit_log("BLOCKED_CONTENT_BINARY", target_label, reason);
+      return {{"approved", false},
+              {"violation", "BLOCKED_BY_CONTENT_SANDBOX"},
+              {"reason", reason}};
+    }
+
+    std::string normalized = normalize_whitespace(content);
+    std::string lower_norm = normalized;
+    std::transform(lower_norm.begin(), lower_norm.end(), lower_norm.begin(),
+                   ::tolower);
+    std::string lower_raw = content;
+    std::transform(lower_raw.begin(), lower_raw.end(), lower_raw.begin(),
+                   ::tolower);
+
+    const std::vector<std::string> forbidden_content_patterns = {
+        "rm -rf",       "rm -fr",        "rm -r /",
+        "mkfs",         "dd if=",        ":(){ :|:& };:",
+        "chmod -r 777", "chmod 777 /",   "> /dev/sd",
+        "> /dev/nvme",  "shred ",        "shutdown",
+        "reboot",       "poweroff",      "init 0",
+        "passwd",       "userdel ",      "usermod ",
+        "nc -e",        "ncat -e",       "/dev/tcp/",
+        "/dev/udp/",    "mkfifo ",       "bash -i",
+        "pty.spawn",    "| sh",          "| bash",
+        "|sh",          "|bash",         "/etc/shadow",
+        "/etc/gshadow", "/etc/sudoers",  "id_rsa",
+        "id_ed25519",   "ld_preload",    "shutil.rmtree(\"/\"",
+        "shutil.rmtree('/'", "os.system(\"rm", "os.system('rm",
+        "std::filesystem::remove_all(\"/\""};
+
+    for (const auto &pattern : forbidden_content_patterns) {
+      if (lower_norm.find(pattern) != std::string::npos ||
+          lower_raw.find(pattern) != std::string::npos) {
+        std::string reason =
+            "File content blocked by Sandbox: detected forbidden payload '" +
+            pattern + "'";
+        write_audit_log("BLOCKED_CONTENT", target_label, reason);
+        return {{"approved", false},
+                {"violation", "BLOCKED_BY_CONTENT_SANDBOX"},
+                {"reason", reason}};
+      }
+    }
+
+    write_audit_log("APPROVED_CONTENT", target_label,
+                    "bytes=" + std::to_string(content.size()));
+    return {{"approved", true},
+            {"content_audit", "APPROVED"},
+            {"bytes", content.size()}};
+  }
+
+  // Thực thi mảng tham số cô lập qua fork() + execvp() (không qua /bin/sh -c),
+  // Timeout 8s và giới hạn output 64KB
+  static json run_exec_args(const std::vector<std::string> &args,
+                            const std::string &command_label,
+                            const std::string &working_dir = "") {
+    json result;
+    if (args.empty()) {
+      result["allowed"] = false;
+      result["success"] = false;
+      result["error"] = "Empty argument list.";
+      return result;
+    }
+
+#ifdef __linux__
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+      result["allowed"] = true;
+      result["success"] = false;
+      result["error"] = "Failed to create pipe.";
+      return result;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+      close(pipefd[0]);
+      close(pipefd[1]);
+      result["allowed"] = true;
+      result["success"] = false;
+      result["error"] = "Failed to fork process.";
+      return result;
+    }
+
+    if (pid == 0) {
+      close(pipefd[0]);
+      dup2(pipefd[1], STDOUT_FILENO);
+      dup2(pipefd[1], STDERR_FILENO);
+      close(pipefd[1]);
+
+      if (!working_dir.empty()) {
+        if (chdir(working_dir.c_str()) != 0) {
+          _exit(126);
+        }
+      }
+
+      struct rlimit cpu_limit{10, 10};
+      setrlimit(RLIMIT_CPU, &cpu_limit);
+
+      std::vector<char *> c_args;
+      c_args.reserve(args.size() + 1);
+      for (const auto &s : args) {
+        c_args.push_back(const_cast<char *>(s.c_str()));
+      }
+      c_args.push_back(nullptr);
+
+      execvp(c_args[0], c_args.data());
+      _exit(127);
+    }
+
+    close(pipefd[1]);
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+
+    std::string output;
+    const size_t MAX_OUTPUT = 65536;
+    const int TIMEOUT_MS = 8000;
+    auto start_time = std::time(nullptr);
+    bool timed_out = false;
+
+    struct pollfd pfd{pipefd[0], POLLIN, 0};
+    char buffer[512];
+
+    while (true) {
+      int elapsed_ms = static_cast<int>(
+          std::difftime(std::time(nullptr), start_time) * 1000);
+      int remaining_ms = TIMEOUT_MS - elapsed_ms;
+      if (remaining_ms <= 0) {
+        timed_out = true;
+        break;
+      }
+
+      int ret = poll(&pfd, 1, std::min(remaining_ms, 500));
+      if (ret > 0 && (pfd.revents & POLLIN)) {
+        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
+        if (n > 0) {
+          if (output.size() + static_cast<size_t>(n) > MAX_OUTPUT) {
+            output.append(buffer, MAX_OUTPUT - output.size());
+            output += "\n[... Output truncated at 64KB by VKU MCP Sandbox ...]";
+            break;
+          }
+          output.append(buffer, static_cast<size_t>(n));
+        } else if (n == 0) {
+          break;
+        }
+      } else if (ret > 0 && (pfd.revents & (POLLHUP | POLLERR))) {
+        ssize_t n;
+        while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+          if (output.size() + static_cast<size_t>(n) > MAX_OUTPUT)
+            break;
+          output.append(buffer, static_cast<size_t>(n));
+        }
+        break;
+      }
+    }
+
+    close(pipefd[0]);
+
+    int status = 0;
+    if (timed_out) {
+      kill(pid, SIGKILL);
+      waitpid(pid, &status, 0);
+      write_audit_log("TIMEOUT", command_label, "Exceeded 8s execution timeout");
+      result["allowed"] = true;
+      result["success"] = false;
+      result["command"] = command_label;
+      result["error"] = "SANDBOX_TIMEOUT: Command exceeded 8 seconds limit and "
+                        "was terminated.";
+      result["output"] = output;
+      return result;
+    }
+
+    waitpid(pid, &status, 0);
+    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+    write_audit_log("ALLOWED", command_label,
+                    "exit_code=" + std::to_string(exit_code));
+    result["allowed"] = true;
+    result["command"] = command_label;
+    result["exit_code"] = exit_code;
+    result["output"] = output;
+    result["success"] = (exit_code == 0);
+#else
+    write_audit_log("ALLOWED_SIM", command_label, "Simulated on non-Linux");
+    result = {{"allowed", true},
+              {"command", command_label},
+              {"exit_code", 0},
+              {"output", "Simulated output for: " + command_label},
+              {"success", true}};
+#endif
+    return result;
+  }
+
   // Tool 4: Quét các cổng mạng TCP/UDP đang mở ở trạng thái LISTEN trên máy chủ
   // Linux
   static json audit_network_ports() {
@@ -262,148 +470,8 @@ public:
       }
     }
 
-    // Lớp 5: Thực thi cô lập bằng fork() + execvp() (không qua /bin/sh -c), kèm
-    // Timeout 8s và giới hạn 64KB
-#ifdef __linux__
-    int pipefd[2]; // pipefd[0] để tiến trình cha đọc, pipefd[1] để tiến trình
-                   // con ghi output
-    if (pipe(pipefd) != 0) {
-      result["allowed"] = true;
-      result["success"] = false;
-      result["error"] = "Failed to create pipe.";
-      return result;
-    }
-
-    pid_t pid = fork(); // Nhân bản tiến trình để chạy lệnh trong tiến trình con
-                        // riêng biệt
-    if (pid < 0) {
-      close(pipefd[0]);
-      close(pipefd[1]);
-      result["allowed"] = true;
-      result["success"] = false;
-      result["error"] = "Failed to fork process.";
-      return result;
-    }
-
-    if (pid == 0) {
-      // --- TIẾN TRÌNH CON (CHILD PROCESS) ---
-      close(pipefd[0]); // Đóng đầu đọc không dùng tới
-      dup2(pipefd[1],
-           STDOUT_FILENO); // Chuyển hướng stdout của lệnh vào đường ống pipe
-      dup2(pipefd[1],
-           STDERR_FILENO); // Chuyển hướng stderr vào chung đường ống pipe
-      close(pipefd[1]);
-
-      // Giới hạn tối đa 10 giây CPU cho tiến trình con tránh treo hệ thống
-      struct rlimit cpu_limit{10, 10};
-      setrlimit(RLIMIT_CPU, &cpu_limit);
-
-      // Chuyển vector<string> thành mảng char* kết thúc bằng nullptr để truyền
-      // cho execvp()
-      std::vector<char *> c_args;
-      c_args.reserve(args.size() + 1);
-      for (auto &s : args) {
-        c_args.push_back(const_cast<char *>(s.c_str()));
-      }
-      c_args.push_back(nullptr);
-
-      execvp(c_args[0],
-             c_args.data()); // Thực thi trực tiếp file nhị phân (không gọi
-                             // shell -> miễn nhiễm Shell Injection)
-      _exit(127); // Nếu execvp thất bại (không tìm thấy lệnh) thì thoát ngay
-                  // tiến trình con
-    }
-
-    // --- TIẾN TRÌNH CHA (PARENT PROCESS) ---
-    // Đọc kết quả từ pipe ở chế độ non-blocking, kiểm soát Timeout 8s và cắt
-    // output tối đa 64KB
-    close(pipefd[1]);
-    fcntl(pipefd[0], F_SETFL,
-          O_NONBLOCK); // Bật non-blocking để không bị treo khi đọc
-
-    std::string output;
-    const size_t MAX_OUTPUT = 65536; // Giới hạn output 64KB chống tràn RAM
-    const int TIMEOUT_MS = 8000;     // Timeout 8 giây
-    auto start_time = std::time(nullptr);
-    bool timed_out = false;
-
-    struct pollfd pfd{pipefd[0], POLLIN, 0};
-    char buffer[512];
-
-    while (true) {
-      int elapsed_ms = static_cast<int>(
-          std::difftime(std::time(nullptr), start_time) * 1000);
-      int remaining_ms = TIMEOUT_MS - elapsed_ms;
-      if (remaining_ms <= 0) {
-        timed_out =
-            true; // Quá 8 giây -> đánh dấu timeout để kill tiến trình con
-        break;
-      }
-
-      int ret =
-          poll(&pfd, 1,
-               std::min(remaining_ms,
-                        500)); // Chờ dữ liệu từ pipe tối đa 500ms mỗi nhịp
-      if (ret > 0 && (pfd.revents & POLLIN)) {
-        ssize_t n = read(pipefd[0], buffer, sizeof(buffer));
-        if (n > 0) {
-          if (output.size() + static_cast<size_t>(n) > MAX_OUTPUT) {
-            output.append(buffer, MAX_OUTPUT - output.size());
-            output += "\n[... Output truncated at 64KB by VKU MCP Sandbox ...]";
-            break;
-          }
-          output.append(buffer, static_cast<size_t>(n));
-        } else if (n == 0) {
-          break; // EOF
-        }
-      } else if (ret > 0 && (pfd.revents & (POLLHUP | POLLERR))) {
-        // Drain remaining bytes
-        ssize_t n;
-        while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
-          if (output.size() + static_cast<size_t>(n) > MAX_OUTPUT)
-            break;
-          output.append(buffer, static_cast<size_t>(n));
-        }
-        break;
-      }
-    }
-
-    close(pipefd[0]);
-
-    int status = 0;
-    if (timed_out) {
-      kill(pid, SIGKILL);
-      waitpid(pid, &status, 0);
-      write_audit_log("TIMEOUT", command, "Exceeded 8s execution timeout");
-      result["allowed"] = true;
-      result["success"] = false;
-      result["command"] = command;
-      result["error"] = "SANDBOX_TIMEOUT: Command exceeded 8 seconds limit and "
-                        "was terminated.";
-      result["output"] = output;
-      return result;
-    }
-
-    waitpid(pid, &status, 0);
-    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-
-    write_audit_log("ALLOWED", command,
-                    "exit_code=" + std::to_string(exit_code));
-    result["allowed"] = true;
-    result["command"] = command;
-    result["exit_code"] = exit_code;
-    result["output"] = output;
-    result["success"] = (exit_code == 0);
-#else
-    write_audit_log("ALLOWED_SIM", command, "Simulated on non-Linux");
-    result = {{"allowed", true},
-              {"command", command},
-              {"exit_code", 0},
-              {"output", "Simulated output for: " + command},
-              {"success", true}};
-#endif
-
-    return result;
+    // Lớp 5: Thực thi cô lập bằng fork() + execvp() qua hàm dùng chung
+    return run_exec_args(args, command);
   }
 };
 

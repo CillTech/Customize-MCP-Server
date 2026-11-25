@@ -52,9 +52,9 @@ def test_mcp_server():
             "validate": lambda res: res.get("result", {}).get("protocolVersion") == "2024-11-05"
         },
         {
-            "name": "MCP Tool Discovery (tools/list -> 14 tools)",
+            "name": "MCP Tool Discovery (tools/list -> 15 tools)",
             "request": {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-            "validate": lambda res: len(res.get("result", {}).get("tools", [])) == 14
+            "validate": lambda res: len(res.get("result", {}).get("tools", [])) == 15
         },
         {
             "name": "Tool 1: get_system_health",
@@ -145,6 +145,41 @@ def test_mcp_server():
             "name": "Tool 14: ai_model_router",
             "request": {"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {"name": "ai_model_router", "arguments": {"prefer_speed": False}}},
             "validate": lambda res: "recommended_model" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 15: manage_workspace (list_dir Customize-MCP-Server)",
+            "request": {"jsonrpc": "2.0", "id": 21, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "list_dir", "path": "."}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 15: manage_workspace (content sandbox approved create_file)",
+            "request": {"jsonrpc": "2.0", "id": 22, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "create_file", "path": "_mcp_test_tmp.py", "content": "print('workspace_ok')\n"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("content_approved") is True
+        },
+        {
+            "name": "Tool 15: manage_workspace (content sandbox block rm -rf)",
+            "request": {"jsonrpc": "2.0", "id": 23, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "create_file", "path": "_mcp_bad.sh", "content": "#!/bin/bash\nrm -rf /\n"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_CONTENT_SANDBOX"
+        },
+        {
+            "name": "Tool 15: manage_workspace (scope block outside Customize-MCP-Server)",
+            "request": {"jsonrpc": "2.0", "id": 24, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "create_file", "path": "../_mcp_escape.txt", "content": "hi"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "OUTSIDE_WORKSPACE_SCOPE"
+        },
+        {
+            "name": "Tool 15: manage_workspace (edit_file & run_file inside Customize-MCP-Server)",
+            "request": {"jsonrpc": "2.0", "id": 25, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "edit_file", "path": "_mcp_test_tmp.py", "content": "print('workspace_edited')\n"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("content_approved") is True
+        },
+        {
+            "name": "Tool 15: manage_workspace (run_file .py)",
+            "request": {"jsonrpc": "2.0", "id": 26, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "run_file", "path": "_mcp_test_tmp.py"}}},
+            "validate": lambda res: "workspace_edited" in json.loads(res["result"]["content"][0]["text"]).get("output", "")
+        },
+        {
+            "name": "Tool 15: manage_workspace (delete cleanup)",
+            "request": {"jsonrpc": "2.0", "id": 27, "method": "tools/call", "params": {"name": "manage_workspace", "arguments": {"action": "delete", "path": "_mcp_test_tmp.py"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
         }
     ]
 

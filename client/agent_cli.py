@@ -158,9 +158,11 @@ class MCPServerBridge:
 # Bộ điều khiển AI Agent: kết nối LLM (Ollama Qwen / Gemini / Offline Reasoner) với các Tool MCP
 class AgenticController:
     SYSTEM_INSTRUCTION = (
-        "Bạn là công cụ báo cáo kỹ thuật Linux (không phải chatbot trò chuyện).\n"
-        "Nhiệm vụ: Đọc [Dữ liệu thực tế từ C++ MCP Server] và xuất báo cáo ngắn gọn, đầy đủ bằng tiếng Việt theo dạng gạch đầu dòng.\n"
-        "Kết thúc bằng một câu nhận xét khẳng định. Cấm dùng dấu hỏi chấm (?) và cấm đặt câu hỏi cho người dùng."
+        "Bạn là Trợ lý AI Quản trị Hệ thống Linux thông minh, trò chuyện tự nhiên và súc tích bằng tiếng Việt.\n"
+        "Khi có dữ liệu thực tế từ hệ thống, hãy nêu rõ các thông số hoặc trạng thái vừa ghi nhận, "
+        "kèm 1–2 nhận xét kỹ thuật ngắn gọn và chốt bằng 1 dòng kết luận về tình trạng hiện tại.\n"
+        "Khi người dùng hỏi tiếp nối hoặc trao đổi thêm, hãy dựa vào ngữ cảnh cuộc trò chuyện trước đó để trả lời liền mạch, tự nhiên như một đoạn chat.\n"
+        "Đi thẳng vào trọng tâm, không dài dòng hướng dẫn từng bước và không hỏi ngược lại người dùng."
     )
 
     COMMAND_INFER_PROMPT = (
@@ -175,7 +177,7 @@ class AgenticController:
         "If the user is just greeting, chatting, or asking a general theory question, reply with exactly: NONE"
     )
 
-    SUPPORTED_SERVICES = ["nginx", "ssh", "ufw", "docker", "mysql", "postgresql", "apache2", "cron"]
+    SUPPORTED_SERVICES = ["nginx", "ssh", "docker", "mysql", "postgresql", "apache2", "cron"]
 
     def __init__(self, bridge, api_key=None):
         self.bridge = bridge
@@ -233,6 +235,37 @@ class AgenticController:
                 break
             lines.pop()
         return "\n".join(lines).strip()
+
+    @staticmethod
+    def _strip_unsolicited_guides(text):
+        """Cắt bỏ phần hướng dẫn từng bước hoặc danh sách lệnh terminal nếu model nhỏ tự sinh thêm khi phân tích hệ thống."""
+        if not text:
+            return text
+        guide_marker = re.search(
+            r"(?im)^\s*(?:"
+            r"để\s+(?:kích hoạt|bật|tắt|cài đặt|kiểm tra|cấu hình|điều chỉnh|xử lý|khắc phục|sử dụng|thực hiện|bảo vệ)[^\n]*(?:bước sau|lệnh sau|:)"
+            r"|bạn có thể (?:sử dụng|dùng|thực hiện) các (?:lệnh|bước) sau"
+            r"|dưới đây là các (?:bước|lệnh)"
+            r"|các bước thực hiện"
+            r"|```"
+            r")",
+            text,
+        )
+        if guide_marker and guide_marker.start() > 40:
+            cleaned = text[: guide_marker.start()].strip()
+            if cleaned:
+                return cleaned
+        return text
+
+    @staticmethod
+    def _clean_cjk_leaks(text):
+        """Loại bỏ các ký tự Hán/Trung vô tình lọt vào câu trả lời của model đa ngữ nhỏ."""
+        if not text:
+            return text
+        cleaned = re.sub(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+", "", text)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+        return cleaned.strip()
 
     def _infer_linux_command(self, user_query):
         """
@@ -299,10 +332,146 @@ class AgenticController:
             f"- Tiến trình: {proc_cnt} tiến trình | Uptime: {uptime}."
         )
 
+    def format_tool_context(self, tool_name, args, raw_output):
+        """Chuyển JSON thô từ C++ MCP Server thành ngữ cảnh tiếng Việt rõ ràng cho LLM nhỏ."""
+        if tool_name == "get_system_health":
+            return self.format_telemetry_for_ai(raw_output)
+
+        data = self._safe_json(raw_output)
+        if tool_name == "check_firewall_status":
+            state = data.get("ufw_state", "unknown")
+            state_vi = (
+                "ĐANG TẮT (inactive - UFW chưa bật bảo vệ)"
+                if state == "inactive"
+                else (
+                    "ĐANG BẬT (active - UFW đang hoạt động lọc gói tin)"
+                    if state == "active"
+                    else "CHƯA XÁC ĐỊNH"
+                )
+            )
+            raw = (data.get("raw_output") or "").strip()
+            note = data.get("note", "")
+            meta_lines = []
+            rule_lines = []
+            for ln in raw.splitlines():
+                s = ln.strip()
+                if not s or s.startswith("--") or s.lower().startswith(("to ", "status:")):
+                    continue
+                if not s.lower().startswith("default:") and any(k in s.upper() for k in ("ALLOW", "DENY", "REJECT", "LIMIT")):
+                    rule_lines.append("  " + re.sub(r"\s{2,}", " | ", s))
+                else:
+                    meta_lines.append(s)
+
+            ctx = (
+                f"Kết quả kiểm tra tường lửa UFW thực tế:\n"
+                f"- Trạng thái: {state_vi}\n"
+            )
+            if meta_lines:
+                ctx += "- Cấu hình chung: " + " ; ".join(meta_lines) + "\n"
+            if rule_lines:
+                ctx += "- Các rule/cổng đang cấu hình:\n" + "\n".join(rule_lines) + "\n"
+            if note:
+                ctx += f"- Ghi chú: {note}"
+            return ctx.strip()
+
+        if tool_name == "manage_firewall_rule":
+            success = data.get("success", False)
+            action = args.get("action")
+            target = args.get("target", "ufw")
+            status_vi = "THÀNH CÔNG" if success else "THẤT BẠI"
+            out = (data.get("output") or data.get("error") or "").strip()
+            note = data.get("note", "")
+            if action == "disable":
+                act_desc = "TẮT tường lửa UFW"
+                state_desc = "Tường lửa UFW hiện ĐÃ TẮT (inactive)." if success else "Không thể tắt UFW."
+            elif action == "enable":
+                act_desc = "BẬT tường lửa UFW"
+                state_desc = "Tường lửa UFW hiện ĐÃ BẬT (active)." if success else "Không thể bật UFW."
+            else:
+                act_desc = f"Cập nhật rule UFW ({action} {target})"
+                state_desc = f"Đã áp dụng {action} {target}." if success else f"Không thể áp dụng {action} {target}."
+            ctx = (
+                f"Hành động: {act_desc} -> {status_vi}\n"
+                f"- Trạng thái sau khi chạy: {state_desc}\n"
+                f"- Chi tiết output:\n{out}"
+            )
+            if note:
+                ctx += f"\n- Ghi chú: {note}"
+            return ctx
+
+        if tool_name == "manage_workspace":
+            ok = data.get("success", False)
+            action = args.get("action", "")
+            path = data.get("path") or args.get("path", ".")
+            if data.get("allowed") is False:
+                return (
+                    f"Thao tác Workspace ({action} trên '{path}') BỊ SANDBOX TỪ CHỐI.\n"
+                    f"- Mã vi phạm: {data.get('violation', 'N/A')}\n"
+                    f"- Lý do: {data.get('error', 'Vi phạm chính sách bảo mật Workspace/Nội dung')}"
+                )
+            lines = [f"Thao tác Workspace ({action}) trên 'Customize-MCP-Server/{path}': {'THÀNH CÔNG' if ok else 'THẤT BẠI'}"]
+            if data.get("content_audit"):
+                lines.append(f"- Kiểm duyệt nội dung Sandbox: {data.get('content_audit')}")
+            if "entries" in data:
+                items = [f"{e['name']} ({e['type']})" for e in data.get("entries", [])[:25]]
+                lines.append(f"- Danh sách ({data.get('count', 0)} mục): {', '.join(items) if items else '(Thư mục trống)'}")
+            if "content" in data:
+                lines.append(f"- Nội dung file:\n{data.get('content', '')[:1200]}")
+            if "output" in data:
+                lines.append(f"- Kết quả chạy (exit_code={data.get('exit_code')}):\n{(data.get('output') or '').strip()}")
+            if data.get("error"):
+                lines.append(f"- Lỗi: {data.get('error')}")
+            return "\n".join(lines)
+
+        return f"Công cụ '{tool_name}' ({args}) đã chạy và trả về:\n{raw_output}"
+
+    @staticmethod
+    def _extract_workspace_path_and_content(user_input, prefixes):
+        """Tách đường dẫn và nội dung (nếu có) từ câu lệnh tiếng Việt cho manage_workspace."""
+        text = user_input.strip()
+        lower = text.lower()
+        body = text
+        for p in sorted(prefixes, key=len, reverse=True):
+            idx = lower.find(p)
+            if idx != -1:
+                body = text[idx + len(p):].strip()
+                break
+
+        content = ""
+        m_content = re.search(
+            r"\s+(?:với\s+nội\s+dung|voi\s+noi\s+dung|nội\s+dung|noi\s+dung|thành\s+nội\s+dung|thanh\s+noi\s+dung|thành|thanh|content)\s*[:=]?\s*(.+)$",
+            body,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if m_content:
+            content = m_content.group(1).strip()
+            if len(content) >= 2 and content[0] == content[-1] and content[0] in ("'", '"'):
+                content = content[1:-1]
+            body = body[: m_content.start()].strip()
+
+        match_loc = re.search(
+            r"^(?:(.*?)\s+)?(?:trong|ở|tai|tại|in)\s+([^\s]+)$",
+            body,
+            re.IGNORECASE,
+        )
+        if match_loc:
+            name = (match_loc.group(1) or "").strip(" '\"")
+            parent = os.path.expanduser(match_loc.group(2).strip(" '\""))
+            if parent.rstrip("/") in ("Customize-MCP-Server", "."):
+                path = name or "."
+            else:
+                path = os.path.join(parent, name) if name else parent
+        else:
+            path = os.path.expanduser(body.strip(" '\":"))
+
+        if path.rstrip("/") == "Customize-MCP-Server":
+            path = "."
+        return path or ".", content
+
     def _match_intent(self, user_input):
         """
-        Bộ phân tích Intent dùng chung (DRY) theo thứ tự ưu tiên chuẩn:
-        Help -> Logs -> Sandbox Command -> Network Ports -> Systemd Services -> Telemetry.
+        Bộ phân tích Intent dùng chung (DRY) hỗ trợ đủ 14 MCP Tools theo thứ tự ưu tiên:
+        Help -> Agentic AI Tools -> Security & Firewall -> Logs -> Sandbox Command -> Ports -> Services -> Telemetry.
         """
         _, plain = normalize_vietnamese(user_input)
 
@@ -313,8 +482,97 @@ class AgenticController:
         if has_any(["chức năng", "làm được gì", "tác dụng", "hỏi gì", "giúp", "help", "menu", "hướng dẫn"]):
             return "help", None, {}
 
-        # 2. Inspect Logs (đặt TRƯỚC service để 'xem log ssh/nginx' không bị nhầm sang manage_service)
-        if has_any(["log", "nhật ký", "journal", "lỗi hệ thống"]):
+        # 1.5 Hội thoại tiếp nối / hỏi tác động, lý do, đánh giá -> trả lời theo ngữ cảnh đoạn chat, KHÔNG chạy nhầm tool
+        explicit_action_start = plain.startswith((
+            "chạy ", "chay ", "tạo ", "tao ", "thêm ", "them ",
+            "sửa ", "sua ", "xóa ", "xoa ", "đọc ", "doc ",
+            "kiểm tra", "kiem tra", "xem ", "mở ", "mo ",
+            "đóng ", "dong ", "chặn ", "chan ", "bật ", "bat ",
+            "tắt ", "tat ", "quét ", "quet ", "rà soát", "ra soat",
+            "liệt kê", "liet ke", "thu thập", "thu thap",
+        ))
+        is_discussion = has_any([
+            "ảnh hưởng gì", "ảnh hưởng như thế nào", "ảnh hưởng thế nào", "ảnh hưởng đến", "ảnh hưởng tới",
+            "tác động gì", "tác động thế nào", "tác động đến", "tác động tới",
+            "có sao không", "có nguy hiểm", "có rủi ro", "có nên", "có ổn không", "có vấn đề gì",
+            "tại sao", "vì sao", "nguyên nhân gì", "nghĩa là gì", "là gì",
+            "giải thích", "nói rõ hơn", "phân tích thêm", "cụ thể hơn", "nhớ không", "vừa rồi",
+            "việc này", "việc đó", "điều này", "điều đó", "cái này", "cái đó", "vấn đề này",
+        ])
+        if is_discussion and not explicit_action_start and not has_any(["kiểm tra", "xem log", "quét", "rà soát", "chạy lệnh", "thu thập snapshot"]):
+            return "discuss", None, {}
+
+        # 2. Agentic AI & Tự hành (Nhóm 3 trên UI - đặt trước service/telemetry để tránh trùng 'nginx', 'ssh', 'cpu', 'ram', 'hệ thống')
+        if has_any(["snapshot", "thu thập sự cố", "toàn cảnh sự cố", "gom thông số"]):
+            num_match = re.search(r"\b(\d{1,2})\b", plain)
+            lines = min(max(int(num_match.group(1)), 5), 50) if num_match else 15
+            return "snapshot", "collect_incident_snapshot", {"log_lines": lines}
+
+        if has_any(["brute-force", "brute force", "bruteforce", "tấn công ssh", "quét các ip", "quét ip ssh", "tự động chặn ip"]):
+            auto_block = has_any(["tự động chặn", "chặn tự động", "auto block", "chặn luôn"])
+            return "mitigate_ssh", "auto_mitigate_ssh_attack", {"threshold": 5, "auto_block": auto_block}
+
+        if has_any(["bộ nhớ sự cố", "incident memory", "kinh nghiệm sự cố", "lịch sử sự cố", "tra cứu bộ nhớ", "lưu sự cố"]):
+            mem_action = "save" if has_any(["lưu bộ nhớ", "lưu sự cố", "ghi nhớ sự cố"]) else "search"
+            keyword = ""
+            for kw_cand in ["nginx", "ssh", "ufw", "docker", "mysql", "ram", "cpu", "disk", "test_nginx"]:
+                if kw_cand in plain:
+                    keyword = kw_cand
+                    break
+            if not keyword:
+                m_kw = re.search(r"(?:tới|toi|về|ve|từ khóa|keyword)\s+([a-z0-9_.-]+)$", plain)
+                if m_kw:
+                    keyword = m_kw.group(1)
+            return "incident_memory", "incident_memory", {"action": mem_action, "keyword": keyword}
+
+        if has_any(["ollama", "danh sách model", "các model", "liệt kê model", "model đang cài", "model đang chạy"]):
+            ol_action = "ps" if has_any(["đang chạy", "running", "ps"]) else ("status" if has_any(["trạng thái", "status"]) else "list")
+            return "ollama", "manage_ollama_models", {"action": ol_action}
+
+        if has_any(["phần cứng gpu", "phần cứng ai", "phần cứng cpu", "cho ai", "gpu", "nvidia", "vram", "avx2", "avx512"]):
+            return "ai_hardware", "check_ai_hardware", {}
+
+        if has_any(["gợi ý model", "đề xuất model", "chọn model", "model router", "model qwen phù hợp", "phù hợp với ram"]):
+            prefer_speed = has_any(["nhanh", "tốc độ", "speed"])
+            return "model_router", "ai_model_router", {"prefer_speed": prefer_speed}
+
+        # 3. Bảo mật & Tường lửa (Nhóm 2 trên UI - đặt trước Services & Network Ports)
+        if has_any(["đăng nhập ssh thất bại", "đăng nhập thất bại", "failed login", "failed password", "sai mật khẩu", "lỗi đăng nhập", "lastb"]):
+            num_match = re.search(r"\b(\d{1,3})\b", plain)
+            limit = min(max(int(num_match.group(1)), 1), 100) if num_match else 20
+            return "failed_logins", "check_failed_logins", {"limit": limit}
+
+        ip_match = re.search(r"\b((?:\d{1,3}\.){3}\d{1,3})\b", plain)
+        port_match = re.search(r"(?:port|cổng|cong)\s*(\d{1,5}(?:/tcp|/udp)?)\b", plain)
+        is_fw_keyword = has_any(["tường lửa", "firewall", "ufw"])
+        is_fw_rule_phrase = has_any(["mở port", "mở cổng", "đóng port", "đóng cổng", "chặn port", "chặn cổng", "chặn ip", "cấm ip", "allow port", "deny port", "allow ip", "deny ip"])
+
+        if is_fw_keyword or (is_fw_rule_phrase and (ip_match or port_match)):
+            is_check_query = (
+                "?" in user_input
+                or has_any([
+                    "kiểm tra", "trạng thái", "status", "xem", "danh sách",
+                    "rule", "luật", "bật hay tắt", "đang bật", "đang tắt",
+                    "có bật", "có tắt", "bật chưa", "tắt chưa",
+                ])
+            )
+            target = ip_match.group(1) if ip_match else (port_match.group(1) if port_match else "")
+
+            if target and has_any(["chặn", "cấm", "đóng", "khóa", "deny", "block"]):
+                return "firewall_rule", "manage_firewall_rule", {"action": "deny", "target": target}
+            if target and has_any(["mở", "cho phép", "allow"]):
+                return "firewall_rule", "manage_firewall_rule", {"action": "allow", "target": target}
+
+            if not target and not is_check_query:
+                if has_any(["bật", "enable", "kích hoạt", "mở", "start"]):
+                    return "firewall_rule", "manage_firewall_rule", {"action": "enable", "target": "ufw"}
+                if has_any(["tắt", "disable", "vô hiệu", "dừng", "ngắt", "đóng", "stop"]):
+                    return "firewall_rule", "manage_firewall_rule", {"action": "disable", "target": "ufw"}
+
+            return "firewall_status", "check_firewall_status", {}
+
+        # 4. Inspect Logs (đặt TRƯỚC service để 'xem log ssh/nginx' không bị nhầm sang manage_service)
+        if has_any(["log", "nhật ký", "journal", "lỗi hệ thống", "dmesg"]):
             source = "syslog"
             if "nginx" in plain:
                 source = "nginx"
@@ -322,12 +580,14 @@ class AgenticController:
                 source = "auth"
             elif "journal" in plain:
                 source = "journal"
+            elif "dmesg" in plain:
+                source = "dmesg"
 
             num_match = re.search(r"\b(\d{1,3})\b", plain)
             lines = min(max(int(num_match.group(1)), 1), 100) if num_match else 10
             return "logs", "inspect_logs", {"log_source": source, "lines": lines}
 
-        # 3. Sandboxed Command Execution (dùng regex cắt prefix an toàn)
+        # 5. Sandboxed Command Execution (dùng regex cắt prefix an toàn)
         cmd_match = re.match(
             r"^(?:chạy lệnh|chay lenh|exec|command|lệnh|lenh)\s+(.+)$",
             user_input.strip(),
@@ -339,52 +599,30 @@ class AgenticController:
                 cmd = " ".join(os.path.expanduser(p) for p in cmd.split())
             return "exec", "execute_safe_command", {"command": cmd}
 
-        if has_any(["tạo thư mục", "tao thu muc", "tạo folder", "tao folder"]):
-            raw_target = user_input.strip()
-            for p in ["tạo thư mục", "tao thu muc", "tạo folder", "tao folder"]:
-                idx = user_input.lower().find(p)
-                if idx != -1:
-                    raw_target = user_input[idx + len(p):].strip()
-                    break
+        # 5.5 Workspace Operations (giới hạn duy nhất trong Customize-MCP-Server, duyệt nội dung qua Sandbox)
+        ws_rules = [
+            ("append_file", ["ghi thêm vào file", "ghi them vao file", "thêm nội dung vào file", "them noi dung vao file", "nối vào file"]),
+            ("edit_file", ["sửa file", "sua file", "chỉnh sửa file", "chinh sua file", "cập nhật file", "cap nhat file", "sửa nội dung file"]),
+            ("create_file", ["tạo file", "tao file", "thêm file", "them file", "viết file", "viet file", "tạo tập tin"]),
+            ("create_dir", ["tạo thư mục", "tao thu muc", "tạo folder", "tao folder", "thêm thư mục", "them thu muc", "thêm folder"]),
+            ("delete", ["xóa file", "xoa file", "xóa thư mục", "xoa thu muc", "xóa folder", "xoa folder"]),
+            ("read_file", ["đọc file", "doc file", "xem nội dung file", "xem file"]),
+            ("run_file", ["chạy file", "chay file", "chạy script", "chay script", "chạy thư mục", "chay thu muc", "chạy folder", "chay folder"]),
+            ("list_dir", ["xem thư mục", "xem thu muc", "xem folder", "mở thư mục", "mo thu muc", "mở folder", "mo folder", "liệt kê file", "liet ke file", "liệt kê thư mục", "danh sách file"]),
+        ]
+        for ws_action, ws_prefixes in ws_rules:
+            if has_any(ws_prefixes):
+                path, content = self._extract_workspace_path_and_content(user_input, ws_prefixes)
+                ws_args = {"action": ws_action, "path": path}
+                if ws_action in ("create_file", "edit_file", "append_file"):
+                    ws_args["content"] = content
+                return "workspace", "manage_workspace", ws_args
 
-            # Bóc tách cú pháp: "<tên> trong/ở/tại <thư mục>" (ví dụ: 'demo trong /home/cill')
-            match_loc = re.search(r"^(.*?)\s+(?:trong|ở|tai|tại|in)\s+(/[^\s]+|~[^\s]*|[^\s]+)$", raw_target, re.IGNORECASE)
-            if match_loc:
-                name = match_loc.group(1).strip()
-                parent_dir = match_loc.group(2).strip()
-                full_path = os.path.join(parent_dir, name)
-            else:
-                full_path = raw_target.strip()
-
-            full_path = os.path.expanduser(full_path.strip("'\""))
-            cmd = f"mkdir -p '{full_path}'"
-            return "exec", "execute_safe_command", {"command": cmd}
-
-        if has_any(["tạo file", "tao file"]):
-            raw_target = user_input.strip()
-            for p in ["tạo file", "tao file"]:
-                idx = user_input.lower().find(p)
-                if idx != -1:
-                    raw_target = user_input[idx + len(p):].strip()
-                    break
-
-            match_loc = re.search(r"^(.*?)\s+(?:trong|ở|tai|tại|in)\s+(/[^\s]+|~[^\s]*|[^\s]+)$", raw_target, re.IGNORECASE)
-            if match_loc:
-                name = match_loc.group(1).strip()
-                parent_dir = match_loc.group(2).strip()
-                full_path = os.path.join(parent_dir, name)
-            else:
-                full_path = raw_target.strip()
-
-            full_path = os.path.expanduser(full_path.strip("'\""))
-            cmd = f"touch '{full_path}'"
-            return "exec", "execute_safe_command", {"command": cmd}
-
-        # 4. Network Ports Audit
+        # 6. Network Ports Audit
         if has_any(["cổng", "port", "socket", "listening", "quét cổng", "rà soát"]):
             return "ports", "audit_network_ports", {}
 
-        # 5. Service Management
+        # 7. Service Management
         if has_any(self.SUPPORTED_SERVICES + ["dịch vụ", "service", "systemctl"]):
             service = "nginx"
             for svc in self.SUPPORTED_SERVICES:
@@ -401,7 +639,7 @@ class AgenticController:
                 action = "stop"
             return "service", "manage_service", {"service_name": service, "action": action}
 
-        # 6. Telemetry (CPU / RAM / Disk / Uptime / General Health)
+        # 8. Telemetry (CPU / RAM / Disk / Uptime / General Health)
         if has_any(["cpu", "tải cpu", "load avg", "mức tải", "nhiệt độ", "temp"]):
             return "cpu", "get_system_health", {}
         if has_any(["ram", "bộ nhớ", "memory"]):
@@ -410,27 +648,41 @@ class AgenticController:
             return "disk", "get_system_health", {}
         if has_any(["uptime", "chạy bao lâu", "bật bao lâu", "thời gian hoạt động"]):
             return "uptime", "get_system_health", {}
-        if has_any(["sức khỏe", "tài nguyên", "hệ thống", "tổng quan", "health", "tình trạng", "status", "server", "máy chủ"]):
+        if has_any([
+            "sức khỏe", "tài nguyên", "tổng quan hệ thống", "tình trạng hệ thống",
+            "tình trạng server", "tình trạng máy chủ", "kiểm tra hệ thống",
+            "kiểm tra server", "kiểm tra máy chủ", "thông số hệ thống",
+            "health", "system status", "server status",
+        ]):
             return "health", "get_system_health", {}
 
         return "chat", None, {}
 
-    def call_qwen_local_api(self, user_query, context_data=None):
+    def call_qwen_local_api(self, user_query, context_data=None, strip_guides=False, is_action=False):
         """
         Gọi Qwen Local qua Ollama (/api/chat - 100% Offline).
-        Dữ liệu tool chỉ đính kèm cho lượt hiện tại, KHÔNG nhồi vào lịch sử chat dài hạn.
+        Khi chạy tool thực tế, không đưa lịch sử tool cũ vào để model nhỏ không nhại lại trạng thái cũ.
         """
         current_user_content = user_query
         if context_data:
-            current_user_content = (
-                f"Yêu cầu: {user_query}\n\n"
-                f"[Dữ liệu thực tế từ C++ MCP Server]:\n{context_data}\n\n"
-                f"Hãy tóm tắt đầy đủ kết quả trên và kết thúc ngay, không hỏi thêm."
-            )
+            if is_action:
+                current_user_content = (
+                    f"{user_query}\n\n"
+                    f"[Kết quả từ hệ thống]:\n{context_data}\n\n"
+                    f"Hãy phản hồi ngắn gọn, tự nhiên về kết quả thực thi, trạng thái mới và chốt lại bằng 1 dòng kết luận."
+                )
+            else:
+                current_user_content = (
+                    f"{user_query}\n\n"
+                    f"[Dữ liệu thực tế từ hệ thống]:\n{context_data}\n\n"
+                    f"Hãy trình bày lại trạng thái/số liệu trên một cách tự nhiên, ngắn gọn kèm 1–2 nhận xét kỹ thuật và kết thúc bằng 1 dòng kết luận."
+                )
 
+        # Chỉ dùng chat_history cho hội thoại thường; khi phân tích tool mới thì đọc đúng dữ liệu hiện tại
+        history_msgs = [] if context_data else self.chat_history[-10:]
         messages = (
             [{"role": "system", "content": self.SYSTEM_INSTRUCTION}]
-            + self.chat_history[-10:]
+            + history_msgs
             + [{"role": "user", "content": current_user_content}]
         )
 
@@ -440,8 +692,8 @@ class AgenticController:
             "stream": False,
             "keep_alive": "60m",
             "options": {
-                "num_predict": 350,
-                "temperature": 0.2,
+                "num_predict": 600,
+                "temperature": 0.25 if context_data else 0.35,
             },
         }
 
@@ -460,6 +712,9 @@ class AgenticController:
             ).strip()
 
             answer = self._strip_trailing_questions(raw_answer)
+            if strip_guides:
+                answer = self._strip_unsolicited_guides(answer)
+            answer = self._clean_cjk_leaks(answer)
 
             if answer:
                 self.chat_history.append({"role": "user", "content": user_query})
@@ -558,6 +813,101 @@ class AgenticController:
                 f"  ➔ Khuyến nghị: {data.get('recommendation', 'N/A')}"
             )
 
+        if intent == "firewall_status":
+            state = str(data.get("ufw_state", "unknown")).upper()
+            raw_out = (data.get("raw_output") or "").strip()
+            note = data.get("note", "")
+            msg = (
+                f"🔥 Trạng Thái Tường Lửa UFW:\n"
+                f"  • Trạng thái: {state}\n"
+                f"{raw_out}"
+            )
+            if note:
+                msg += f"\n  • Ghi chú: {note}"
+            return msg
+
+        if intent == "firewall_rule":
+            ok = data.get("success", False)
+            out = (data.get("output") or data.get("error") or "").strip()
+            note = data.get("note", "")
+            msg = (
+                f"🛡️ Thao Tác Tường Lửa UFW ({args.get('action')} {args.get('target', 'ufw')}):\n"
+                f"  • Kết quả : {'THÀNH CÔNG' if ok else 'THẤT BẠI'}\n"
+                f"  • Phản hồi: {out}"
+            )
+            if note:
+                msg += f"\n  • Lưu ý   : {note}"
+            return msg
+
+        if intent == "failed_logins":
+            return (
+                f"🔐 Thống Kê Đăng Nhập SSH Thất Bại (Giới hạn {args.get('limit', 20)}):\n"
+                f"{(data.get('entries') or '').strip()}"
+            )
+
+        if intent == "snapshot":
+            return (
+                f"📸 Snapshot Sự Cố Hệ Thống ({data.get('timestamp', 'N/A')}):\n"
+                f"  • Tiến trình: {data.get('system_health', {}).get('process_count', 'N/A')}\n"
+                f"  • RAM dùng  : {data.get('system_health', {}).get('memory', {}).get('used_percentage', 'N/A')}%\n"
+                f"  • Cổng mạng : {(data.get('network_ports', {}).get('raw_sockets') or '').strip()}\n"
+                f"  • SSH Failed: {(data.get('failed_ssh_logins', {}).get('entries') or '').strip()}"
+            )
+
+        if intent == "mitigate_ssh":
+            attackers = data.get("attackers_detected", [])
+            summary = "\n".join(
+                f"  • IP {a.get('ip')}: {a.get('failed_attempts')} lần sai (blocked={a.get('blocked')})"
+                for a in attackers
+            ) or "  • Không phát hiện IP vượt ngưỡng tấn công brute-force."
+            return f"🚨 Kết Quả Quét SSH Brute-force (Ngưỡng >= {args.get('threshold', 5)}):\n{summary}"
+
+        if intent == "incident_memory":
+            matches = data.get("matches", [])
+            if matches:
+                items = "\n".join(f"  • [{m.get('timestamp')}] {m.get('keyword')}: {m.get('solution')}" for m in matches)
+            else:
+                items = f"  • Không có bản ghi sự cố nào khớp từ khóa '{args.get('keyword', '')}'."
+            return f"🧠 Bộ Nhớ Kinh Nghiệm Sự Cố:\n{items}"
+
+        if intent == "ollama":
+            return f"🤖 Trạng Thái Ollama ({args.get('action', 'list')}):\n{(data.get('output') or '').strip()}"
+
+        if intent == "ai_hardware":
+            return (
+                f"🖥️ Phần Cứng Phục Vụ AI:\n"
+                f"  • GPU NVIDIA: {data.get('gpu_info', 'N/A')}\n"
+                f"  • Tập lệnh CPU: {(data.get('cpu_ai_extensions') or '').strip()}"
+            )
+
+        if intent == "model_router":
+            return (
+                f"🧭 Gợi Ý Model Qwen Tối Ưu:\n"
+                f"  • RAM khả dụng: {data.get('available_ram_mb', 'N/A')} MB\n"
+                f"  • Model đề xuất: {data.get('recommended_model', 'qwen2.5:1.5b')}\n"
+                f"  • Lý do: {data.get('reason', '')}"
+            )
+
+        if intent == "workspace":
+            if data.get("allowed") is False:
+                return (
+                    f"⛔ [SANDBOX WORKSPACE TỪ CHỐI]\n"
+                    f"  • Thao tác : {args.get('action')} ({args.get('path')})\n"
+                    f"  • Vi phạm  : {data.get('violation', 'N/A')}\n"
+                    f"  • Lý do    : {data.get('error', 'Không được phép')}"
+                )
+            if not data.get("success", False):
+                return f"⚠️ Lỗi Workspace ({args.get('action')}): {data.get('error', 'Thất bại')}"
+            act = args.get("action")
+            if act == "list_dir":
+                entries = "\n".join(f"  • [{e['type']}] {e['name']}" for e in data.get("entries", [])[:30])
+                return f"📁 Thư mục Customize-MCP-Server/{data.get('path', '.')} ({data.get('count', 0)} mục):\n{entries}"
+            if act == "read_file":
+                return f"📄 Nội dung {data.get('path')}:\n{data.get('content', '')}"
+            if act == "run_file":
+                return f"▶️ Chạy {data.get('path')} (exit={data.get('exit_code')}):\n{(data.get('output') or '').strip()}"
+            return f"✅ Đã thực hiện {act} trong Customize-MCP-Server/{data.get('path')} (Sandbox Content: {data.get('content_audit', 'OK')})."
+
         if intent == "logs":
             return (
                 f"📜 Nhật Ký Hệ Thống ({args['log_source']} - {args['lines']} dòng):\n"
@@ -618,6 +968,7 @@ class AgenticController:
         intent, tool_name, args = self._match_intent(user_query)
 
         # 2. Nếu ngoài intent cố định -> nhờ Qwen tự dịch sang lệnh Linux an toàn để chạy qua Sandbox
+        # (Bỏ qua bước dịch lệnh nếu là câu hỏi trao đổi/tiếp nối 'discuss')
         if not tool_name and intent == "chat":
             inferred_cmd = self._infer_linux_command(user_query)
             if inferred_cmd:
@@ -632,15 +983,27 @@ class AgenticController:
         if tool_name:
             print(f"  {YELLOW}[Tool Call] ⚡ vku_mcp_server -> {tool_name}({args}){RESET}")
             raw_output = self.bridge.call_tool(tool_name, args)
-            if tool_name == "get_system_health":
-                context = self.format_telemetry_for_ai(raw_output)
-            else:
-                context = f"Công cụ '{tool_name}' ({args}) đã chạy và trả về:\n{raw_output}"
+            context = self.format_tool_context(tool_name, args, raw_output)
 
         # 3. Đưa kết quả thực tế cho Qwen Local phân tích và trả lời ngay (100% Offline)
         qwen_err_msg = None
+        strip_guides = bool(
+            tool_name and tool_name not in ("execute_safe_command", "manage_workspace")
+        )
+        is_action = tool_name in {
+            "manage_firewall_rule",
+            "manage_service",
+            "execute_safe_command",
+            "auto_mitigate_ssh_attack",
+            "incident_memory",
+        } or (
+            tool_name == "manage_workspace"
+            and args.get("action") in ("create_dir", "create_file", "edit_file", "append_file", "delete", "run_file")
+        )
         try:
-            qwen_res, model_used = self.call_qwen_local_api(user_query, context)
+            qwen_res, model_used = self.call_qwen_local_api(
+                user_query, context, strip_guides=strip_guides, is_action=is_action
+            )
             if qwen_res:
                 print(f"  {GREEN}[AI Engine] -> Processed by Qwen Local ({model_used}){RESET}")
                 return f"{qwen_res}\n\n🤖 [Model: {model_used} Local | 100% Offline]"

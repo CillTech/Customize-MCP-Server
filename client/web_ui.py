@@ -477,11 +477,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
             background: #090d16;
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 10px 12px;
-            margin: 8px 0;
+            padding: 8px 12px;
+            margin: 6px 0;
             overflow-x: auto;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
+            line-height: 1.45;
             color: #e2e8f0;
         }
         .msg-ai code {
@@ -643,7 +644,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
             <span class="brand-badge">VKU OSS 2026</span>
             <div>
                 <h1>Agentic AI Linux MCP Controller</h1>
-                <span class="brand-sub">Native C++17 POSIX Core • 14 Active Tools</span>
+                <span class="brand-sub">Native C++17 POSIX Core • 15 Active Tools</span>
             </div>
         </div>
         <div class="header-actions">
@@ -691,7 +692,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
         <aside class="sidebar-panel">
             <div class="sidebar-header">
                 <span>🧰 Danh mục MCP Tools</span>
-                <span class="tool-count-badge">14 Live</span>
+                <span class="tool-count-badge">15 Live</span>
             </div>
             <div class="sidebar-content">
                 <!-- Nhóm 1: Hệ thống & Dịch vụ -->
@@ -716,7 +717,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
                 <!-- Nhóm 2: Bảo mật & Tường lửa -->
                 <div class="acc-group open">
                     <button class="acc-header" onclick="toggleGroup(this)">
-                        <span>🛡️ Bảo mật & Tường lửa (5)</span>
+                        <span>🛡️ Bảo mật & Tường lửa (6)</span>
                         <span class="acc-arrow">▶</span>
                     </button>
                     <div class="acc-body">
@@ -725,6 +726,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
                         </button>
                         <button class="tool-item" onclick="sendPrompt('Chạy lệnh uname -a')">
                             <span class="tool-name">execute_safe_command</span><span class="tag-live">LIVE</span>
+                        </button>
+                        <button class="tool-item" onclick="sendPrompt('Liệt kê file trong Customize-MCP-Server')">
+                            <span class="tool-name">manage_workspace</span><span class="tag-live">LIVE</span>
                         </button>
                         <button class="tool-item" onclick="sendPrompt('Kiểm tra trạng thái tường lửa ufw')">
                             <span class="tool-name">check_firewall_status</span><span class="tag-live">LIVE</span>
@@ -796,11 +800,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
                 </div>
             </div>
 
-            <!-- 4 Quick Actions hay dùng nhất -->
+            <!-- Quick Actions hay dùng nhất -->
             <div class="quick-prompts">
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra sức khỏe hệ thống')">📊 Sức khỏe hệ thống</button>
                 <button class="btn-prompt" onclick="sendPrompt('Rà soát các cổng mạng đang mở')">🛡️ Quét cổng mạng</button>
                 <button class="btn-prompt" onclick="sendPrompt('Kiểm tra trạng thái tường lửa ufw')">🔥 Trạng thái Firewall</button>
+                <button class="btn-prompt" onclick="sendPrompt('Bật tường lửa ufw')">🔓 Bật UFW</button>
+                <button class="btn-prompt" onclick="sendPrompt('Tắt tường lửa ufw')">🔒 Tắt UFW</button>
                 <button class="btn-prompt" onclick="sendPrompt('chạy lệnh rm -rf /tmp/data')">⚠️ Test Sandbox (rm -rf)</button>
             </div>
 
@@ -945,11 +951,24 @@ HTML_PAGE = r"""<!DOCTYPE html>
 
         // Render Markdown đơn giản cho tin nhắn AI (code block, inline code, bold, xuống dòng)
         function formatMarkdown(text) {
+            const codeBlocks = [];
             let safe = escapeHtml(text);
-            safe = safe.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+
+            // Tách fenced code block trước để không bị đổi \n -> <br> bên trong thẻ <pre>
+            safe = safe.replace(/```(?:[a-zA-Z0-9_-]+)?[ \t]*\r?\n?([\s\S]*?)```/g, (_, code) => {
+                const idx = codeBlocks.length;
+                const cleanCode = code.replace(/^(?:[ \t]*\r?\n)+|(?:\r?\n[ \t]*)+$/g, '');
+                codeBlocks.push(`<pre><code>${cleanCode}</code></pre>`);
+                return `@@VKUCB_${idx}@@`;
+            });
+
             safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
             safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            safe = safe.replace(/\\n|\n/g, '<br>');
+            safe = safe.replace(/\r?\n|\\n/g, '<br>');
+
+            // Loại bỏ <br> thừa ngay sát trước/sau thẻ <pre>
+            safe = safe.replace(/(?:<br>)*(@@VKUCB_\d+@@)(?:<br>)*/g, '$1');
+            safe = safe.replace(/@@VKUCB_(\d+)@@/g, (_, idx) => codeBlocks[Number(idx)]);
             return safe;
         }
 

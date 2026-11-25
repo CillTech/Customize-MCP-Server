@@ -3,10 +3,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
+#include <fstream>
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <string>
+
+#ifdef __linux__
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace vku::tools {
 
@@ -36,9 +43,55 @@ private:
 #ifdef _WIN32
     int exit_code = _pclose(pipe);
 #else
-    int exit_code = pclose(pipe);
+    int raw_status = pclose(pipe);
+    int exit_code =
+        WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
 #endif
     return {exit_code, output};
+  }
+
+  static bool is_root_user() {
+#ifdef __linux__
+    return geteuid() == 0;
+#else
+    return true;
+#endif
+  }
+
+  static std::string ufw_cmd_prefix() {
+    return is_root_user() ? "ufw " : "sudo -n ufw ";
+  }
+
+  static std::string to_lower_copy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return s;
+  }
+
+  // Đọc trạng thái cấu hình từ /etc/ufw/ufw.conf (không cần root) làm fallback
+  // khi chạy non-root chưa cấu hình sudoers NOPASSWD
+  static std::string read_ufw_conf_enabled() {
+    std::ifstream ifs("/etc/ufw/ufw.conf");
+    if (!ifs.is_open()) {
+      return "";
+    }
+    std::string line;
+    while (std::getline(ifs, line)) {
+      std::string trimmed;
+      for (char c : line) {
+        if (!std::isspace(static_cast<unsigned char>(c))) {
+          trimmed.push_back(static_cast<char>(
+              std::tolower(static_cast<unsigned char>(c))));
+        }
+      }
+      if (trimmed == "enabled=yes") {
+        return "yes";
+      }
+      if (trimmed == "enabled=no") {
+        return "no";
+      }
+    }
+    return "";
   }
 
 public:
@@ -46,16 +99,52 @@ public:
   static json check_firewall_status() {
     json result;
 #ifdef __linux__
-    auto [code, output] = run_cmd("ufw status verbose 2>&1");
-    result["success"] = (code == 0);
-    result["raw_output"] = output;
+    auto [code, output] = run_cmd(ufw_cmd_prefix() + "status verbose 2>&1");
+    std::string lower_out = to_lower_copy(output);
     result["tool"] = "ufw";
-    if (code != 0) {
-      result["note"] =
-          "ufw may require root/sudo privileges or is not installed.";
+
+    if (code == 0) {
+      result["success"] = true;
+      result["raw_output"] = output;
+      if (lower_out.find("status: inactive") != std::string::npos) {
+        result["ufw_state"] = "inactive";
+      } else if (lower_out.find("status: active") != std::string::npos) {
+        result["ufw_state"] = "active";
+      } else {
+        result["ufw_state"] = "unknown";
+      }
+      return result;
     }
+
+    // Nếu thiếu quyền sudo -n, đọc fallback từ /etc/ufw/ufw.conf để không báo
+    // sai trạng thái bật/tắt của tường lửa
+    std::string conf_enabled = read_ufw_conf_enabled();
+    if (!conf_enabled.empty()) {
+      std::string state = (conf_enabled == "yes") ? "active" : "inactive";
+      result["success"] = true;
+      result["ufw_state"] = state;
+      result["config_fallback"] = true;
+      result["config_source"] = "/etc/ufw/ufw.conf (ENABLED=" + conf_enabled + ")";
+      result["raw_output"] =
+          "Status: " + state +
+          " (xác nhận từ /etc/ufw/ufw.conf; để xem đầy đủ danh sách rule cần "
+          "cấp quyền sudo NOPASSWD cho /usr/sbin/ufw)\n[Command output]: " +
+          output;
+      result["note"] =
+          "Chạy 'sudo visudo -f /etc/sudoers.d/vku_mcp' và thêm "
+          "'<user> ALL=(ALL) NOPASSWD: /usr/sbin/ufw, /usr/bin/systemctl, "
+          "/bin/systemctl' để MCP gọi trực tiếp 'ufw status verbose'.";
+      return result;
+    }
+
+    result["success"] = false;
+    result["ufw_state"] = "unknown";
+    result["raw_output"] = output;
+    result["note"] =
+        "ufw requires root/sudo NOPASSWD privileges or is not installed.";
 #else
     result["success"] = true;
+    result["ufw_state"] = "active";
     result["tool"] = "ufw (simulated on non-Linux)";
     result["raw_output"] =
         "Status: active\nTo                         Action      From\n--       "
@@ -65,15 +154,61 @@ public:
     return result;
   }
 
-  // Tool 7: Thêm rule cho phép (allow) hoặc chặn (deny) theo Port hoặc IPv4
+  // Tool 7: Quản lý tường lửa UFW (allow/deny Port/IPv4 hoặc enable/disable)
   static json manage_firewall_rule(const std::string &action,
-                                   const std::string &target) {
+                                   const std::string &target = "") {
     json result;
 
-    // 1. Chỉ chấp nhận hành động "allow" hoặc "deny"
-    if (action != "allow" && action != "deny") {
+    // 1. Chỉ chấp nhận hành động hợp lệ
+    if (action != "allow" && action != "deny" && action != "enable" &&
+        action != "disable") {
       result["success"] = false;
-      result["error"] = "Invalid action. Supported: 'allow', 'deny'.";
+      result["error"] =
+          "Invalid action. Supported: 'allow', 'deny', 'enable', 'disable'.";
+      return result;
+    }
+
+    if (action == "enable" || action == "disable") {
+#ifdef __linux__
+      bool protected_ports = false;
+      if (action == "enable") {
+        // Anti-Lockout: giữ mở SSH (22) và MCP Web UI (8080) trước khi bật UFW
+        auto [c22, out22] =
+            run_cmd(ufw_cmd_prefix() + "allow 22/tcp 2>&1");
+        auto [c8080, out8080] =
+            run_cmd(ufw_cmd_prefix() + "allow 8080/tcp 2>&1");
+        (void)out22;
+        (void)out8080;
+        protected_ports = (c22 == 0 && c8080 == 0);
+      }
+
+      std::string cmd = (action == "enable")
+                            ? (ufw_cmd_prefix() + "--force enable 2>&1")
+                            : (ufw_cmd_prefix() + "disable 2>&1");
+      auto [code, output] = run_cmd(cmd);
+      result["success"] = (code == 0);
+      result["action"] = action;
+      result["target"] = "ufw";
+      if (action == "enable" && code == 0 && protected_ports) {
+        result["anti_lockout_ports"] = json::array({"22/tcp", "8080/tcp"});
+        result["output"] =
+            "[Anti-Lockout] Đã tự động giữ mở port 22/tcp (SSH) và 8080/tcp "
+            "(Web UI).\n" +
+            output;
+      } else {
+        result["output"] = output;
+      }
+      if (code != 0 && !is_root_user()) {
+        result["note"] =
+            "Thao tác bật/tắt UFW cần quyền root hoặc cấu hình sudo NOPASSWD "
+            "cho /usr/sbin/ufw.";
+      }
+#else
+      result["success"] = true;
+      result["action"] = action;
+      result["target"] = "ufw";
+      result["output"] = "Simulated: ufw " + action + " applied.";
+#endif
       return result;
     }
 
@@ -107,15 +242,20 @@ public:
     // Port dùng "ufw allow/deny <port>")
     std::string cmd;
     if (is_ip) {
-      cmd = "ufw " + action + " from " + target + " 2>&1";
+      cmd = ufw_cmd_prefix() + action + " from " + target + " 2>&1";
     } else {
-      cmd = "ufw " + action + " " + target + " 2>&1";
+      cmd = ufw_cmd_prefix() + action + " " + target + " 2>&1";
     }
     auto [code, output] = run_cmd(cmd);
     result["success"] = (code == 0);
     result["action"] = action;
     result["target"] = target;
     result["output"] = output;
+    if (code != 0 && !is_root_user()) {
+      result["note"] =
+          "Thay đổi rule UFW cần quyền root hoặc cấu hình sudo NOPASSWD cho "
+          "/usr/sbin/ufw.";
+    }
 #else
     result["success"] = true;
     result["action"] = action;

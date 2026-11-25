@@ -14,6 +14,7 @@
 #include "security_sandbox.hpp"
 #include "service_tools.hpp"
 #include "system_tools.hpp"
+#include "workspace_tools.hpp"
 
 
 namespace vku::mcp {
@@ -105,20 +106,22 @@ private:
             {"properties", json::object()},
             {"required", json::array()}}}},
          {{"name", "manage_firewall_rule"},
-          {"description", "Allow or deny a port or IPv4 address in UFW "
-                          "firewall with strict input validation."},
+          {"description",
+           "Enable/disable UFW firewall or allow/deny a port or IPv4 address "
+           "with strict input validation."},
           {"inputSchema",
            {{"type", "object"},
             {"properties",
              {{"action",
                {{"type", "string"},
-                {"enum", {"allow", "deny"}},
-                {"description", "Firewall rule action"}}},
+                {"enum", {"allow", "deny", "enable", "disable"}},
+                {"description", "Firewall action"}}},
               {"target",
                {{"type", "string"},
                 {"description",
-                 "Target port (e.g., '8080', '22/tcp') or IPv4 address"}}}}},
-            {"required", {"action", "target"}}}}},
+                 "Target port (e.g., '8080', '22/tcp') or IPv4 address "
+                 "(required for allow/deny)"}}}}},
+            {"required", {"action"}}}}},
          {{"name", "check_failed_logins"},
           {"description", "Check recent failed SSH login attempts from "
                           "auth.log or lastb to detect brute-force attacks."},
@@ -196,7 +199,35 @@ private:
                {{"type", "boolean"},
                 {"description", "Prioritize speed over reasoning depth"},
                 {"default", false}}}}},
-            {"required", json::array()}}}}});
+            {"required", json::array()}}}},
+         {{"name", "manage_workspace"},
+          {"description",
+           "Create, read, edit, delete, list, or run files/folders strictly "
+           "inside 'Customize-MCP-Server'. All file writes/scripts require "
+           "Sandbox content approval."},
+          {"inputSchema",
+           {{"type", "object"},
+            {"properties",
+             {{"action",
+               {{"type", "string"},
+                {"enum",
+                 {"list_dir", "read_file", "create_dir", "create_file",
+                  "edit_file", "append_file", "delete", "run_file"}},
+                {"description", "Workspace action"}}},
+              {"path",
+               {{"type", "string"},
+                {"description",
+                 "Relative or absolute path strictly inside "
+                 "'Customize-MCP-Server'"}}},
+              {"content",
+               {{"type", "string"},
+                {"description",
+                 "File text content (audited by Sandbox before writing)"}}},
+              {"args",
+               {{"type", "array"},
+                {"items", {{"type", "string"}}},
+                {"description", "Optional arguments for run_file"}}}}},
+            {"required", {"action"}}}}}});
   }
 
 public:
@@ -303,6 +334,20 @@ public:
         bool prefer_speed = args.value("prefer_speed", false);
         execution_result =
             vku::tools::AITools::ai_model_router(prefer_speed);
+      } else if (tool_name == "manage_workspace") {
+        std::string ws_action = args.value("action", "list_dir");
+        std::string ws_path = args.value("path", ".");
+        std::string ws_content = args.value("content", "");
+        std::vector<std::string> ws_args;
+        if (args.contains("args") && args["args"].is_array()) {
+          for (const auto &a : args["args"]) {
+            if (a.is_string()) {
+              ws_args.push_back(a.get<std::string>());
+            }
+          }
+        }
+        execution_result = vku::tools::WorkspaceTools::manage_workspace(
+            ws_action, ws_path, ws_content, ws_args);
       } else {
         return make_error(id, -32601, "Method/Tool not found: " + tool_name);
       }

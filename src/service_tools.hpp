@@ -8,13 +8,18 @@
 #include <sstream>
 #include <string>
 
+#ifdef __linux__
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 namespace vku::tools {
 
 using json = nlohmann::json;
 
 class ServiceTools {
 public:
-  // Tool 2: Kiểm tra và điều khiển dịch vụ Systemd (nginx, ssh, ufw, docker...)
+  // Tool 2: Kiểm tra và điều khiển dịch vụ Systemd (nginx, ssh, docker...)
   static json manage_service(const std::string &service_name,
                              const std::string &action) {
     json result;
@@ -48,7 +53,10 @@ public:
     }
 
 #ifdef __linux__
-    std::string cmd = "systemctl " + action + " " + service_name + " 2>&1";
+    bool needs_priv = (action != "status" && action != "is-active");
+    std::string prefix =
+        (needs_priv && geteuid() != 0) ? "sudo -n systemctl " : "systemctl ";
+    std::string cmd = prefix + action + " " + service_name + " 2>&1";
     std::array<char, 256> buffer;
     std::string output;
 
@@ -64,9 +72,10 @@ public:
     }
 
     int status = pclose(pipe);
-    int exit_code =
-        WEXITSTATUS(status); // Tách mã thoát thực tế của lệnh systemctl (0 =
-                             // thành công, 3 = service đang tắt)
+    int exit_code = WIFEXITED(status)
+                        ? WEXITSTATUS(status)
+                        : status; // Tách mã thoát thực tế của lệnh systemctl
+                                  // (0 = thành công, 3 = service đang tắt)
 
     // Kiểm tra thêm trạng thái hoạt động hiện tại (active / inactive / failed)
     // của dịch vụ
@@ -96,6 +105,15 @@ public:
     result["active_state"] = active_state;
     result["success"] =
         (exit_code == 0 || (action == "status" && exit_code == 3));
+    if (service_name == "ufw") {
+      result["note"] =
+          "ufw.service la systemd oneshot unit; hay dung check_firewall_status "
+          "de xem trang thai bat/tat loc goi tin thuc te.";
+    } else if (needs_priv && exit_code != 0 && geteuid() != 0) {
+      result["note"] =
+          "Thao tac start/stop/restart systemd can quyen root hoac sudo "
+          "NOPASSWD.";
+    }
 
 #else
     result = {{"service", service_name},

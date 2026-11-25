@@ -36,11 +36,13 @@ def get_file_mtimes():
                         pass
     return mtimes
 
+# Biên dịch lại toàn bộ mã nguồn C++ bằng lệnh 'make'
 def build_cpp():
     print("\n[⚡ DEV WATCHER] Detected C++ code change! Recompiling with make...", flush=True)
     res = subprocess.run(["make"], cwd=ROOT_DIR)
     return res.returncode == 0
 
+# Vòng lặp theo dõi thay đổi file mỗi 0.8s để tự động build C++ và restart Web UI
 def main():
     print("======================================================================")
     print(" [VKU OSS 2026] LIVE RELOAD & AUTO-BUILD DEV MODE STARTED")

@@ -23,6 +23,7 @@ RESET = "\033[0m"
 def print_header(title):
     print(f"\n{CYAN}{BOLD}=== {title} ==={RESET}")
 
+# Chạy bộ 6 bài test tự động kiểm tra chuẩn giao thức MCP (Handshake, Discovery, Tools, Sandbox)
 def test_mcp_server():
     print(f"{BOLD}[VKU OSS 2026] Starting Automated MCP C++ Protocol Verification{RESET}")
     print(f"Target Binary: {BIN_PATH}")
@@ -31,6 +32,7 @@ def test_mcp_server():
         print(f"{RED}[FAIL] Target binary not found at: {BIN_PATH}. Please run 'make' first.{RESET}")
         sys.exit(1)
 
+    # Khởi chạy trực tiếp file thực thi C++ MCP Server qua đường ống stdin/stdout
     proc = subprocess.Popen(
         [BIN_PATH],
         stdin=subprocess.PIPE,
@@ -40,6 +42,7 @@ def test_mcp_server():
         bufsize=1
     )
 
+    # Danh sách 6 bài test kiểm tra lần lượt: Handshake -> Tools List -> Health -> Ports -> Sandbox Block -> Sandbox Pass
     tests = [
         {
             "name": "MCP Handshake (initialize)",

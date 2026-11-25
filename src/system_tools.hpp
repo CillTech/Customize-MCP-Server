@@ -23,11 +23,12 @@ using json = nlohmann::json;
 
 class SystemTools {
 public:
+    // Tool 1: Thu thập thông số sức khỏe máy chủ Linux theo thời gian thực (OS, RAM, Disk, CPU, Nhiệt độ)
     static json get_system_health() {
         json result;
 
 #ifdef __linux__
-        // 1. Host and Kernel Information (uname)
+        // 1. Lấy thông tin hệ điều hành & nhân Kernel qua system call uname()
         struct utsname u_info;
         if (uname(&u_info) == 0) {
             result["os_info"] = {
@@ -39,7 +40,7 @@ public:
             };
         }
 
-        // 2. Memory & Process Information
+        // 2. Lấy thời gian máy đã bật (Uptime) và số tiến trình qua system call sysinfo()
         struct sysinfo s_info;
         long uptime_sec = 0;
         int proc_count = 0;
@@ -63,7 +64,7 @@ public:
             result["process_count"] = proc_count;
         }
 
-        // Exact memory calculation matching Linux standard 'free -m' via /proc/meminfo
+        // Đọc file ảo /proc/meminfo để tính chính xác thông số RAM giống lệnh 'free -m' trên Linux
         unsigned long long mem_total_kb = 0, mem_free_kb = 0, mem_avail_kb = 0;
         unsigned long long mem_buffers_kb = 0, mem_cached_kb = 0, mem_reclaim_kb = 0;
 
@@ -79,7 +80,7 @@ public:
                 else if (key == "Cached:") mem_cached_kb = val;
                 else if (key == "SReclaimable:") mem_reclaim_kb = val;
                 std::string rest;
-                std::getline(meminfo_file, rest);
+                std::getline(meminfo_file, rest); // Bỏ qua phần đơn vị "kB" ở cuối dòng
             }
         }
 
@@ -115,7 +116,7 @@ public:
             };
         }
 
-        // 3. Disk Storage Information (statvfs POSIX call)
+        // 3. Đo dung lượng phân vùng ổ đĩa gốc "/" qua system call POSIX statvfs()
         struct statvfs fs_info;
         if (statvfs("/", &fs_info) == 0) {
             unsigned long long total_disk = (unsigned long long)fs_info.f_blocks * fs_info.f_frsize;

@@ -14,10 +14,11 @@ using json = nlohmann::json;
 
 class ServiceTools {
 public:
+    // Tool 2: Kiểm tra và điều khiển dịch vụ Systemd (nginx, ssh, ufw, docker...)
     static json manage_service(const std::string& service_name, const std::string& action) {
         json result;
 
-        // 1. Validation: Prevent Shell Injection in service name
+        // 1. Kiểm tra tên dịch vụ bằng Regex để chống tấn công Command Injection
         std::regex valid_name_regex("^[a-zA-Z0-9_\\-\\.]+$");
         if (!std::regex_match(service_name, valid_name_regex)) {
             result["success"] = false;
@@ -25,7 +26,7 @@ public:
             return result;
         }
 
-        // 2. Validation: Restrict to permitted actions
+        // 2. Chỉ cho phép các hành động hợp lệ trong danh sách (Whitelist)
         const std::vector<std::string> allowed_actions = {
             "status", "start", "stop", "restart", "reload", "enable", "disable", "is-active"
         };
@@ -60,9 +61,9 @@ public:
         }
 
         int status = pclose(pipe);
-        int exit_code = WEXITSTATUS(status);
+        int exit_code = WEXITSTATUS(status); // Tách mã thoát thực tế của lệnh systemctl (0 = thành công, 3 = service đang tắt)
 
-        // Check if active
+        // Kiểm tra thêm trạng thái hoạt động hiện tại (active / inactive / failed) của dịch vụ
         std::string check_cmd = "systemctl is-active " + service_name + " 2>/dev/null";
         FILE* check_pipe = popen(check_cmd.c_str(), "r");
         std::string active_state = "unknown";

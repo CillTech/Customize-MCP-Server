@@ -18,6 +18,7 @@ import re
 import unicodedata
 
 
+# Chuẩn hóa chuỗi tiếng Việt (có dấu & không dấu) để nhận diện từ khóa lệnh chính xác hơn
 def normalize_vietnamese(text):
     if not text:
         return "", ""
@@ -58,6 +59,7 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 
+# Cầu nối giao tiếp JSON-RPC 2.0 qua stdin/stdout với C++ MCP Server
 class MCPServerBridge:
     def __init__(self, binary_path):
         if not os.path.exists(binary_path):
@@ -99,9 +101,10 @@ class MCPServerBridge:
         if params is not None:
             payload["params"] = params
 
+        # Gửi payload JSON-RPC 2.0 qua stdin tới tiến trình C++ MCP Server và đọc 1 dòng phản hồi từ stdout
         req_line = json.dumps(payload) + "\n"
         self.proc.stdin.write(req_line)
-        self.proc.stdin.flush()
+        self.proc.stdin.flush() # Đẩy dữ liệu ngay lập tức qua pipe, tránh bị kẹt trong bộ đệm
 
         resp_line = self.proc.stdout.readline()
         if not resp_line:
@@ -152,6 +155,7 @@ class MCPServerBridge:
             pass
 
 
+# Bộ điều khiển AI Agent: kết nối LLM (Ollama Qwen / Gemini / Offline Reasoner) với các Tool MCP
 class AgenticController:
     SYSTEM_INSTRUCTION = (
         "Bạn là công cụ báo cáo kỹ thuật Linux (không phải chatbot trò chuyện).\n"
@@ -652,6 +656,7 @@ class AgenticController:
         return f"{clean_res}\n\n⚡ [Engine: VKU Autonomous Reasoner | Sub-millisecond{err_note}]"
 
 
+# Vòng lặp giao diện dòng lệnh (CLI) cho phép chat trực tiếp với AI trên Terminal
 def interactive_session():
     print(f"\n{CYAN}{BOLD}======================================================================{RESET}")
     print(f"{CYAN}{BOLD}   [VKU OSS 2026] AGENTIC AI LINUX ADMINISTRATION INTERFACE{RESET}")

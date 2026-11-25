@@ -14,12 +14,14 @@ using json = nlohmann::json;
 
 class LogTools {
 public:
+    // Tool 3: Đọc nhật ký hệ thống (journalctl, auth.log, nginx, dmesg, syslog)
     static json inspect_logs(const std::string& log_source, int lines) {
         json result;
 
-        // Bound line count to prevent memory exhaustion
+        // 1. Giới hạn số dòng đọc (5 - 200) để tránh tràn bộ nhớ đệm khi AI yêu cầu quá lớn
         int safe_lines = std::clamp(lines, 5, 200);
 
+        // 2. Chọn lệnh đọc log phù hợp theo nguồn log_source
         std::string cmd;
         if (log_source == "journal" || log_source == "systemd") {
             cmd = "journalctl -n " + std::to_string(safe_lines) + " --no-pager 2>&1";
@@ -30,11 +32,12 @@ public:
         } else if (log_source == "dmesg" || log_source == "kernel") {
             cmd = "dmesg | tail -n " + std::to_string(safe_lines) + " 2>&1";
         } else {
-            // Default to syslog
+            // Mặc định đọc syslog
             cmd = "tail -n " + std::to_string(safe_lines) + " /var/log/syslog 2>/dev/null || journalctl -n " + std::to_string(safe_lines) + " --no-pager 2>&1";
         }
 
 #ifdef __linux__
+        // 3. Thực thi lệnh qua pipe trên Linux và thu thập nội dung log
         std::array<char, 512> buffer;
         std::string output;
         FILE* pipe = popen(cmd.c_str(), "r");

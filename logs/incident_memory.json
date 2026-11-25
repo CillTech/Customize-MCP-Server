@@ -1,0 +1,7 @@
+[
+  {
+    "keyword": "test_nginx",
+    "solution": "systemctl restart nginx",
+    "timestamp": "2026-11-25 21:42:17"
+  }
+]

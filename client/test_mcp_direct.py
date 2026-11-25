@@ -39,10 +39,12 @@ def test_mcp_server():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1
     )
 
-    # Danh sách 6 bài test kiểm tra lần lượt: Handshake -> Tools List -> Health -> Ports -> Sandbox Block -> Sandbox Pass
+    # Bộ kiểm thử toàn diện: Giao thức MCP + Toàn bộ 14 Tools + Các lớp bảo vệ Sandbox
     tests = [
         {
             "name": "MCP Handshake (initialize)",
@@ -50,49 +52,99 @@ def test_mcp_server():
             "validate": lambda res: res.get("result", {}).get("protocolVersion") == "2024-11-05"
         },
         {
-            "name": "MCP Tool Discovery (tools/list)",
+            "name": "MCP Tool Discovery (tools/list -> 14 tools)",
             "request": {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-            "validate": lambda res: len(res.get("result", {}).get("tools", [])) >= 5
+            "validate": lambda res: len(res.get("result", {}).get("tools", [])) == 14
         },
         {
-            "name": "Tool Execution: get_system_health",
-            "request": {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": "get_system_health", "arguments": {}}
-            },
+            "name": "Tool 1: get_system_health",
+            "request": {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_system_health", "arguments": {}}},
             "validate": lambda res: "memory" in json.loads(res["result"]["content"][0]["text"])
         },
         {
-            "name": "Tool Execution: audit_network_ports",
-            "request": {
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "tools/call",
-                "params": {"name": "audit_network_ports", "arguments": {}}
-            },
+            "name": "Tool 2: manage_service (ssh status)",
+            "request": {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "manage_service", "arguments": {"service_name": "ssh", "action": "status"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("service") == "ssh"
+        },
+        {
+            "name": "Tool 3: inspect_logs (syslog)",
+            "request": {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "inspect_logs", "arguments": {"log_source": "syslog", "lines": 5}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 4: audit_network_ports",
+            "request": {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "audit_network_ports", "arguments": {}}},
             "validate": lambda res: "raw_sockets" in json.loads(res["result"]["content"][0]["text"])
         },
         {
-            "name": "Security Sandbox: Dangerous Command Block (rm -rf)",
-            "request": {
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "tools/call",
-                "params": {"name": "execute_safe_command", "arguments": {"command": "rm -rf /tmp/test"}}
-            },
+            "name": "Tool 5: execute_safe_command (uname -a)",
+            "request": {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "execute_safe_command", "arguments": {"command": "uname -a"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("allowed") is True
+        },
+        {
+            "name": "Sandbox Block: Dangerous pattern (rm -rf)",
+            "request": {"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "execute_safe_command", "arguments": {"command": "rm -rf /tmp/test"}}},
             "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
         },
         {
-            "name": "Security Sandbox: Approved Command Execution (uname -a)",
-            "request": {
-                "jsonrpc": "2.0",
-                "id": 6,
-                "method": "tools/call",
-                "params": {"name": "execute_safe_command", "arguments": {"command": "uname -a"}}
-            },
-            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("allowed") is True
+            "name": "Sandbox Block: Shell chaining (ls; id)",
+            "request": {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "execute_safe_command", "arguments": {"command": "ls; id"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Sandbox Block: Sensitive path (cat /etc/shadow)",
+            "request": {"jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": {"name": "execute_safe_command", "arguments": {"command": "cat /etc/shadow"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Sandbox Block: Bypass normalization (/bin/rm  -fr)",
+            "request": {"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": {"name": "execute_safe_command", "arguments": {"command": "/bin/rm  -fr /tmp"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("violation") == "BLOCKED_BY_SANDBOX"
+        },
+        {
+            "name": "Tool 6: check_firewall_status",
+            "request": {"jsonrpc": "2.0", "id": 12, "method": "tools/call", "params": {"name": "check_firewall_status", "arguments": {}}},
+            "validate": lambda res: "raw_output" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 7: manage_firewall_rule (injection blocked)",
+            "request": {"jsonrpc": "2.0", "id": 13, "method": "tools/call", "params": {"name": "manage_firewall_rule", "arguments": {"action": "allow", "target": "80; rm -rf /"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is False
+        },
+        {
+            "name": "Tool 8: check_failed_logins",
+            "request": {"jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": {"name": "check_failed_logins", "arguments": {"limit": 5}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 9: collect_incident_snapshot",
+            "request": {"jsonrpc": "2.0", "id": 15, "method": "tools/call", "params": {"name": "collect_incident_snapshot", "arguments": {"log_lines": 5}}},
+            "validate": lambda res: "system_health" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 10: auto_mitigate_ssh_attack (dry-run)",
+            "request": {"jsonrpc": "2.0", "id": 16, "method": "tools/call", "params": {"name": "auto_mitigate_ssh_attack", "arguments": {"threshold": 5, "auto_block": False}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 11: incident_memory (save & search)",
+            "request": {"jsonrpc": "2.0", "id": 17, "method": "tools/call", "params": {"name": "incident_memory", "arguments": {"action": "save", "keyword": "test_nginx", "solution": "systemctl restart nginx"}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 12: manage_ollama_models (list)",
+            "request": {"jsonrpc": "2.0", "id": 18, "method": "tools/call", "params": {"name": "manage_ollama_models", "arguments": {"action": "list"}}},
+            "validate": lambda res: "output" in json.loads(res["result"]["content"][0]["text"])
+        },
+        {
+            "name": "Tool 13: check_ai_hardware",
+            "request": {"jsonrpc": "2.0", "id": 19, "method": "tools/call", "params": {"name": "check_ai_hardware", "arguments": {}}},
+            "validate": lambda res: json.loads(res["result"]["content"][0]["text"]).get("success") is True
+        },
+        {
+            "name": "Tool 14: ai_model_router",
+            "request": {"jsonrpc": "2.0", "id": 20, "method": "tools/call", "params": {"name": "ai_model_router", "arguments": {"prefer_speed": False}}},
+            "validate": lambda res: "recommended_model" in json.loads(res["result"]["content"][0]["text"])
         }
     ]
 

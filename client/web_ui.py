@@ -137,7 +137,7 @@ def init_backend():
     threading.Thread(target=self_healing_watchdog, daemon=True).start()
     print(f"[OK] C++ MCP Server connected. Initialized for Web UI on port {PORT}.")
 
-HTML_PAGE = """<!DOCTYPE html>
+HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
@@ -347,6 +347,7 @@ HTML_PAGE = """<!DOCTYPE html>
             gap: 8px;
         }
         .acc-group {
+            flex-shrink: 0;
             border: 1px solid var(--border);
             border-radius: 8px;
             background: rgba(15, 23, 42, 0.5);
@@ -700,13 +701,13 @@ HTML_PAGE = """<!DOCTYPE html>
                         <span class="acc-arrow">▶</span>
                     </button>
                     <div class="acc-body">
-                        <button class="tool-item" onclick="fillPrompt('Kiểm tra sức khỏe hệ thống')">
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra sức khỏe hệ thống')">
                             <span class="tool-name">get_system_health</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Kiểm tra trạng thái dịch vụ ssh')">
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra trạng thái dịch vụ ssh')">
                             <span class="tool-name">manage_service</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Xem 15 dòng log syslog gần nhất')">
+                        <button class="tool-item" onclick="sendPrompt('Xem 15 dòng log syslog gần nhất')">
                             <span class="tool-name">inspect_logs</span><span class="tag-live">LIVE</span>
                         </button>
                     </div>
@@ -719,19 +720,19 @@ HTML_PAGE = """<!DOCTYPE html>
                         <span class="acc-arrow">▶</span>
                     </button>
                     <div class="acc-body">
-                        <button class="tool-item" onclick="fillPrompt('Rà soát các cổng mạng đang mở')">
+                        <button class="tool-item" onclick="sendPrompt('Rà soát các cổng mạng đang mở')">
                             <span class="tool-name">audit_network_ports</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Chạy lệnh uname -a')">
+                        <button class="tool-item" onclick="sendPrompt('Chạy lệnh uname -a')">
                             <span class="tool-name">execute_safe_command</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Kiểm tra trạng thái tường lửa ufw')">
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra trạng thái tường lửa ufw')">
                             <span class="tool-name">check_firewall_status</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Mở port 8080 trên tường lửa ufw')">
+                        <button class="tool-item" onclick="sendPrompt('Mở port 8080 trên tường lửa ufw')">
                             <span class="tool-name">manage_firewall_rule</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Kiểm tra các lần đăng nhập SSH thất bại')">
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra các lần đăng nhập SSH thất bại')">
                             <span class="tool-name">check_failed_logins</span><span class="tag-live">LIVE</span>
                         </button>
                     </div>
@@ -744,22 +745,22 @@ HTML_PAGE = """<!DOCTYPE html>
                         <span class="acc-arrow">▶</span>
                     </button>
                     <div class="acc-body">
-                        <button class="tool-item" onclick="fillPrompt('Thu thập snapshot sự cố hệ thống hiện tại')">
+                        <button class="tool-item" onclick="sendPrompt('Thu thập snapshot sự cố hệ thống hiện tại')">
                             <span class="tool-name">collect_incident_snapshot</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Quét các IP đang brute-force SSH')">
+                        <button class="tool-item" onclick="sendPrompt('Quét các IP đang brute-force SSH')">
                             <span class="tool-name">auto_mitigate_ssh_attack</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Tra cứu bộ nhớ sự cố liên quan tới nginx')">
+                        <button class="tool-item" onclick="sendPrompt('Tra cứu bộ nhớ sự cố liên quan tới nginx')">
                             <span class="tool-name">incident_memory</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Liệt kê các model Ollama đang cài')">
+                        <button class="tool-item" onclick="sendPrompt('Liệt kê các model Ollama đang cài')">
                             <span class="tool-name">manage_ollama_models</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Kiểm tra phần cứng GPU và CPU cho AI')">
+                        <button class="tool-item" onclick="sendPrompt('Kiểm tra phần cứng GPU và CPU cho AI')">
                             <span class="tool-name">check_ai_hardware</span><span class="tag-live">LIVE</span>
                         </button>
-                        <button class="tool-item" onclick="fillPrompt('Gợi ý model Qwen phù hợp với RAM hiện tại')">
+                        <button class="tool-item" onclick="sendPrompt('Gợi ý model Qwen phù hợp với RAM hiện tại')">
                             <span class="tool-name">ai_model_router</span><span class="tag-live">LIVE</span>
                         </button>
                     </div>
